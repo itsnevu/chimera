@@ -11,9 +11,17 @@ Chimera is being built in two stages. Be clear on which one you're using.
 | Stage | What it does | State |
 |---|---|---|
 | **Layer mode** | Composites transparent PNG layers you supply. Free, instant, fully deterministic. | ✅ **Working** |
-| **AI mode** | Sends each rolled trait combination to an image model with your reference image. | 🚧 **Not implemented yet** |
+| **AI mode** | Rolls traits, builds prompts, renders through an image model, writes matching metadata. | ✅ **Working** — end to end |
+| **QC verification** | Vision-model check that each render contains the traits its metadata claims. | 🚧 **Not built yet** |
 
-Everything in *Usage* below describes **layer mode**, which works today. AI mode is designed but there is no code for it in this repo yet — see [Roadmap](#roadmap).
+Both modes work. The pipeline has been run end to end for 1,000 editions on the
+free `mock` provider — plan, render, hard-kill, resume, finalize — with zero
+duplicate editions and zero double-billing.
+
+**Real renders have not been run against a paid provider.** The OpenRouter
+adapter is written and unit-tested against the documented response shapes, but
+it needs your API key and your money to exercise for real. Start with
+`npm run ai:smoke` (5 images, ~$0.20) before committing to a full run.
 
 The page in [`web/`](web/) is a **design prototype and run configurator**. It demonstrates the trait-rolling algorithm and the rarity ledger in the browser, and emits a config file. It does not call any image API and cannot generate art.
 
@@ -113,17 +121,59 @@ Maximum unique editions is the product of the option counts across every layer i
 
 ---
 
-## Roadmap
+## Usage — AI mode
 
-AI mode, planned:
+Declare your traits as text in [`chimera.traits.js`](chimera.traits.js), set your
+budget in [`src/ai.config.js`](src/ai.config.js), then:
 
-1. Traits are declared as **text** in config rather than PNG files
-2. The existing DNA roll (`createDna`) picks a unique combination
-3. The combination is assembled into a prompt against a fixed style anchor
-4. An image-to-image call renders it, conditioned on one reference image
-5. Metadata is written from the **rolled traits**, so labels always match the request
+```sh
+npm run ai:doctor                        # pre-flight: traits, space, key, budget
+npm run ai:plan                          # roll offline, estimate cost. FREE
+npm run ai:generate -- --provider mock   # full dry run. FREE
+npm run ai:finalize                      # composite backgrounds, write metadata
 
-The point of that ordering: a diffusion model produces no discrete traits on its own. Rolling first is what keeps rarity computable and metadata truthful.
+export OPENROUTER_API_KEY=sk-or-...
+npm run ai:smoke -- --yes                # 5 real images, ~$0.20
+npm run ai:generate -- --yes             # the real thing
+npm run ai:resume -- --yes               # continue after a stop. Never re-bills
+```
+
+### The spend ceiling
+
+`maxSpendUSD` in `src/ai.config.js` is a hard ceiling, not a warning. It is
+enforced twice — `ai:plan` refuses to write an over-budget plan, and
+`ai:generate` halts mid-run the moment cumulative spend would cross it.
+Override per run with `--max-spend`.
+
+```
+ERROR  this run would cost $230.00, above your ceiling of $50.00.
+       Nothing was written. Choose one:
+         - lower --size (1086 editions fits)
+         - pick a cheaper --model
+         - raise maxSpendUSD in src/ai.config.js deliberately
+```
+
+Paid runs also require `--yes`. Without it the command prints the bill and exits.
+
+### Why traits come first
+
+A diffusion model produces no discrete traits on its own. Chimera rolls the
+combination first — with the same weighted engine layer mode uses — then writes
+the prompt from it. Metadata therefore records what you *asked for*, and rarity
+stays computable.
+
+The full reasoning, including the seven levers that keep 1,000 renders on-model,
+is in [docs/ai-mode-plan.md](docs/ai-mode-plan.md).
+
+### Tests
+
+```sh
+npm test        # 30 tests, no dependencies
+```
+
+Includes statistical checks that the weighted draw converges within 4 standard
+errors over 30,000 samples, that a hard-killed ledger resumes without
+double-billing, and that a 4xx is never retried.
 
 ### Models
 

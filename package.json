@@ -21,7 +21,12 @@
     "preview_gif": "node utils/preview_gif.js",
     "generate_metadata": "node utils/generate_metadata.js",
     "ai:plan": "node src/pipeline/planCollection.js",
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "ai:generate": "node src/pipeline/generate.js",
+    "ai:resume": "node src/pipeline/generate.js",
+    "ai:finalize": "node src/pipeline/finalize.js",
+    "ai:smoke": "node src/pipeline/generate.js --limit 5",
+    "ai:doctor": "node src/cli/doctor.js"
   },
   "author": "navy",
   "license": "MIT",

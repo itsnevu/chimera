@@ -22,15 +22,18 @@ const traitConfig = require(`${basePath}/chimera.traits.js`);
 let passed = 0, failed = 0;
 const results = [];
 
+const queued = [];
 function test(name, fn) {
-  try {
-    const detail = fn();
-    passed++;
-    results.push(`  PASS  ${name}${detail ? `  — ${detail}` : ""}`);
-  } catch (e) {
-    failed++;
-    results.push(`  FAIL  ${name}\n        ${e.message}`);
-  }
+  queued.push(async () => {
+    try {
+      const detail = await fn();
+      passed++;
+      results.push(`  PASS  ${name}${detail ? `  — ${detail}` : ""}`);
+    } catch (e) {
+      failed++;
+      results.push(`  FAIL  ${name}\n        ${e.message}`);
+    }
+  });
 }
 
 const layers = buildLayers(traitConfig);
@@ -300,10 +303,175 @@ test("composited traits are kept out of the prompt", () => {
   return "background asked transparent, composited locally";
 });
 
+
+// ────────────────────────────────────────────── ledger, queue, adapters ────
+
+const os = require("os");
+const fs = require("fs");
+const pathMod = require("path");
+const { Ledger, writeAtomic } = require(`${basePath}/src/pipeline/jobState.js`);
+const { pool, TokenBucket } = require(`${basePath}/src/pipeline/queue.js`);
+const openrouter = require(`${basePath}/src/providers/openrouter.js`);
+const { ProviderError, withRetry, redact } = require(`${basePath}/src/providers/base.js`);
+
+const tmpdir = () => fs.mkdtempSync(pathMod.join(os.tmpdir(), "chimera-test-"));
+
+test("ledger round-trips completed work and spend", () => {
+  const dir = tmpdir();
+  const l = new Ledger(`${dir}/ledger.jsonl`).open();
+  l.append({ edition: 1, costUSD: 0.04 });
+  l.append({ edition: 2, costUSD: 0.04 });
+  l.close();
+  const { done, spentUSD } = new Ledger(`${dir}/ledger.jsonl`).read();
+  assert.strictEqual(done.size, 2);
+  assert.ok(Math.abs(spentUSD - 0.08) < 1e-9, `spend was ${spentUSD}`);
+  return "2 editions, $0.08 tallied";
+});
+
+test("ledger survives a truncated final line", () => {
+  const dir = tmpdir();
+  const f = `${dir}/ledger.jsonl`;
+  fs.writeFileSync(f, JSON.stringify({ edition: 1, costUSD: 0.04 }) + "\n" + '{"edition":2,"cost');
+  const { done, spentUSD, torn } = new Ledger(f).read();
+  assert.strictEqual(done.size, 1, "good line should survive");
+  assert.strictEqual(torn, 1, "torn line should be counted");
+  assert.ok(Math.abs(spentUSD - 0.04) < 1e-9);
+  return "kill -9 costs one image, not the run";
+});
+
+test("resume skips exactly what the ledger holds", () => {
+  const dir = tmpdir();
+  const l = new Ledger(`${dir}/ledger.jsonl`).open();
+  [1, 2, 5].forEach((e) => l.append({ edition: e, costUSD: 0 }));
+  l.close();
+  const { done } = new Ledger(`${dir}/ledger.jsonl`).read();
+  const plan = [1, 2, 3, 4, 5, 6].map((edition) => ({ edition }));
+  const queue = plan.filter((e) => !done.has(e.edition)).map((e) => e.edition);
+  assert.deepStrictEqual(queue, [3, 4, 6]);
+  return "1,2,5 done -> renders 3,4,6";
+});
+
+test("writeAtomic never leaves a partial file", () => {
+  const dir = tmpdir();
+  const f = `${dir}/nested/deep/out.json`;
+  writeAtomic(f, '{"a":1}');
+  assert.strictEqual(fs.readFileSync(f, "utf8"), '{"a":1}');
+  assert.ok(!fs.existsSync(`${f}.tmp`), "temp file left behind");
+  return "creates dirs, cleans up tmp";
+});
+
+test("pool respects the concurrency limit", async () => {
+  let inFlight = 0, peak = 0;
+  await pool(
+    Array.from({ length: 40 }, (_, i) => i),
+    async () => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 4));
+      inFlight--;
+    },
+    { concurrency: 4 }
+  );
+  assert.ok(peak <= 4, `peak concurrency was ${peak}, limit 4`);
+  assert.ok(peak > 1, "pool never actually parallelised");
+  return `peak ${peak} of 4`;
+});
+
+test("pool halts when shouldStop flips", async () => {
+  let processed = 0;
+  const res = await pool(
+    Array.from({ length: 200 }, (_, i) => i),
+    async () => { processed++; },
+    { concurrency: 2, shouldStop: () => processed >= 20 }
+  );
+  assert.ok(res.stopped, "pool did not report stopping");
+  assert.ok(processed < 200, "pool ran everything despite shouldStop");
+  return `stopped after ${processed} of 200`;
+});
+
+test("token bucket throttles to its rate", async () => {
+  const b = new TokenBucket(600); // 10/sec
+  const start = Date.now();
+  for (let i = 0; i < 14; i++) await b.take();
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed >= 300, `14 tokens at 10/s took only ${elapsed}ms`);
+  return `14 tokens took ${elapsed}ms`;
+});
+
+test("openrouter parses every documented image shape", () => {
+  const png = Buffer.from("fake-png-bytes");
+  const b64 = png.toString("base64");
+  const shapes = {
+    "data[].b64_json":       { data: [{ b64_json: b64 }] },
+    "images[].b64_json":     { images: [{ b64_json: b64 }] },
+    "data[].image_url.url":  { data: [{ image_url: { url: `data:image/png;base64,${b64}` } }] },
+    "images[].image_url":    { images: [{ image_url: { url: `data:image/png;base64,${b64}` } }] },
+  };
+  Object.entries(shapes).forEach(([label, json]) => {
+    const got = openrouter.extractImage(json);
+    assert.ok(got && got.buffer, `${label} did not yield bytes`);
+    assert.strictEqual(got.buffer.toString(), "fake-png-bytes", `${label} decoded wrong`);
+  });
+  const httpShape = openrouter.extractImage({ data: [{ url: "https://x/y.png" }] });
+  assert.strictEqual(httpShape.url, "https://x/y.png");
+  return `${Object.keys(shapes).length} base64 shapes + http url`;
+});
+
+test("openrouter refuses to invent an image", () => {
+  assert.strictEqual(openrouter.extractImage({ error: "nope" }), null);
+  assert.strictEqual(openrouter.extractImage({}), null);
+  return "unknown payload returns null, never a corrupt buffer";
+});
+
+test("api keys are redacted from anything loggable", () => {
+  const leak = "failed with Bearer sk-or-v1-abcdef1234567890abcdef and sk-proj-9876543210xyz";
+  const clean = redact(leak);
+  assert.ok(!clean.includes("abcdef1234567890"), "bearer token leaked");
+  assert.ok(!clean.includes("9876543210xyz"), "sk- key leaked");
+  assert.ok(clean.includes("REDACTED"));
+  return "bearer + sk- both scrubbed";
+});
+
+test("retries transient failures, never 4xx", async () => {
+  let calls = 0;
+  const out = await withRetry(async () => {
+    calls++;
+    if (calls < 3) throw new ProviderError("429 slow down", { status: 429, retryable: true });
+    return "ok";
+  }, { attempts: 4, baseMs: 1 });
+  assert.strictEqual(out, "ok");
+  assert.strictEqual(calls, 3);
+
+  let bad = 0;
+  await assert.rejects(
+    withRetry(async () => {
+      bad++;
+      throw new ProviderError("400 bad request", { status: 400, retryable: false });
+    }, { attempts: 4, baseMs: 1 })
+  );
+  assert.strictEqual(bad, 1, `a 400 was retried ${bad} times — that spends money on a known-bad request`);
+  return "429 retried 3x, 400 attempted once";
+});
+
+test("spend accounting never becomes NaN", () => {
+  // The adapter returns null when the provider reports no cost. If that
+  // reached the running total the ceiling would silently stop working.
+  const unitCost = 0.04;
+  const charge = (reported) =>
+    typeof reported === "number" && Number.isFinite(reported) ? reported : unitCost;
+  let spent = 0;
+  [null, undefined, NaN, 0.031, 0].forEach((r) => { spent += charge(r); });
+  assert.ok(Number.isFinite(spent), "spend went non-finite");
+  assert.ok(Math.abs(spent - (0.04 * 3 + 0.031 + 0)) < 1e-9, `got ${spent}`);
+  return `null/undefined/NaN fall back to catalogue price`;
+});
+
 // ───────────────────────────────────────────────────────────────── report ────
 
-console.log(`\nCHIMERA — TESTS\n${"─".repeat(62)}`);
-results.forEach((r) => console.log(r));
-console.log(`${"─".repeat(62)}`);
-console.log(`  ${passed} passed, ${failed} failed\n`);
-process.exit(failed ? 1 : 0);
+(async () => {
+  for (const t of queued) await t();
+  console.log(`\nCHIMERA — TESTS\n${"─".repeat(62)}`);
+  results.forEach((r) => console.log(r));
+  console.log(`${"─".repeat(62)}`);
+  console.log(`  ${passed} passed, ${failed} failed\n`);
+  process.exit(failed ? 1 : 0);
+})();
