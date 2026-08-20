@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { startRun, REPO_ROOT } from "@/lib/engine";
+import { rejectCrossOrigin } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,11 @@ export async function GET() {
  * run and is irreversible with --yes, so it needs both a JWT and confirmation.
  */
 export async function POST(req: Request) {
+  // This is the only route whose actions are irreversible, and it was the one
+  // route left without an origin check.
+  const blocked = rejectCrossOrigin(req);
+  if (blocked) return blocked;
+
   const { action, jwt, confirm } = await req.json().catch(() => ({}));
 
   try {
@@ -44,18 +50,23 @@ export async function POST(req: Request) {
     if (action === "validate") return NextResponse.json(startRun("validate"));
 
     if (action === "publish") {
-      if (!confirm) return NextResponse.json(startRun("ai:publish")); // dry run
-      if (!jwt) {
+      if (confirm !== true) return NextResponse.json(startRun("ai:publish")); // dry run
+      if (typeof jwt !== "string" || !jwt.trim()) {
         return NextResponse.json({ error: "Pinning needs a Pinata JWT." }, { status: 400 });
       }
-      const env = { ...process.env, PINATA_JWT: jwt };
-      // startRun takes an OpenRouter key; publish reads PINATA_JWT, so pass it
-      // through the same one-run-only channel.
+
+      // Restore whatever was there before, rather than deleting conditionally.
+      // The previous form only cleaned up when no prior value existed — which
+      // was never true — so a JWT pasted once into the browser silently became
+      // the credential for every later run in this server process.
+      const had = Object.prototype.hasOwnProperty.call(process.env, "PINATA_JWT");
+      const prev = process.env.PINATA_JWT;
       process.env.PINATA_JWT = jwt;
       try {
         return NextResponse.json(startRun("ai:publish", ["--yes"]));
       } finally {
-        if (env.PINATA_JWT === undefined) delete process.env.PINATA_JWT;
+        if (had) process.env.PINATA_JWT = prev;
+        else delete process.env.PINATA_JWT;
       }
     }
 

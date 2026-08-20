@@ -842,10 +842,11 @@ test("fractional weights are sampled in proportion", () => {
   return `even split at weight 0.5 each: ${(share * 100).toFixed(1)}%`;
 });
 
-test("openrouter and QC both ask for real spend figures", async () => {
-  // Without usage.include OpenRouter omits usage.cost, the ledger silently
-  // falls back to catalogue prices on every row, and the spend total stops
-  // reflecting what was actually billed.
+test("both adapters prefer the provider's reported cost over the estimate", async () => {
+  // OpenRouter returns usage.cost automatically — the old `usage:{include:true}`
+  // opt-in is deprecated and a no-op, so asserting it was sent tested nothing
+  // about spend. What matters is that a reported figure is actually read and
+  // preferred, and that a missing one degrades to null rather than to NaN.
   const bodies = [];
   const realFetch = global.fetch;
   global.fetch = async (_url, init) => {
@@ -877,11 +878,28 @@ test("openrouter and QC both ask for real spend figures", async () => {
     global.fetch = realFetch;
   }
   assert.strictEqual(bodies.length, 2, "expected an image call and a QC call");
-  bodies.forEach((b, i) => {
-    assert.ok(b.usage && b.usage.include === true,
-      `request ${i} did not ask for usage — spend would be a guess`);
+
+  // A response with no usage block must yield null, never NaN: null falls back
+  // to the catalogue price, while NaN would poison `spent` and silently
+  // disable every ceiling comparison downstream.
+  const restore = global.fetch;
+  global.fetch = async () => ({
+    ok: true, status: 200,
+    text: async () => JSON.stringify({
+      data: [{ b64_json: Buffer.from("y".repeat(200)).toString("base64") }],
+    }),
   });
-  return "both adapters send usage.include, and real cost wins";
+  try {
+    const bare = await openrouter.render({
+      prompt: "p", negative: "", seed: 1, references: [],
+      output: { width: 1024, height: 1024, format: "png" },
+      model: "m", apiKey: "sk-test",
+    });
+    assert.strictEqual(bare.costUSD, null, "a missing usage block must be null, not NaN");
+  } finally {
+    global.fetch = restore;
+  }
+  return "reported cost wins; a missing one is null, not NaN";
 });
 
 // ───────────────────────────────────────────────────────────────── report ────

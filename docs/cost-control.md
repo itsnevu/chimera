@@ -66,7 +66,10 @@ sole authority on what has been paid for.
   unique entries and zero duplicates.
 - **A torn final line** from a hard kill is skipped on read. You lose one
   image, not the run.
-- **Failures are not recorded**, so a failed edition is retried on the next run
+- **Failed editions are retried** on the next run — no ledger row marks them done.
+  Their cost *is* recorded, in a row carrying no edition number: the provider
+  bills every dispatched attempt, so money spent on attempts that produced
+  nothing usable still counts against your ceiling and still survives a resume
   without you tracking anything.
 
 ## Never delete what you paid for

@@ -67,9 +67,20 @@ drop.forEach((rec) => {
 
 // Dropping the flagged rows also drops what they cost, which would hand that
 // budget back to the ceiling: re-render, flag, requeue, repeat, and the run
-// spends without limit while the ledger total never moves. Carry the money
-// forward in a row that counts toward spend but marks no edition as done.
-const carried = drop.reduce((a, r) => a + (r.costUSD || 0), 0);
+// spends without limit while the ledger total never moves.
+//
+// Carrying only the flagged editions is not enough. `done` holds edition rows
+// ONLY (jobState skips `edition == null`), so rebuilding the file from it also
+// silently deletes every spend-only row already present — the failed-attempt
+// rows generate.js writes, and the carry row a previous requeue wrote. That
+// pins the ledger total at a constant while real billing keeps climbing.
+//
+// So the carry is computed from the authoritative total instead: everything
+// the ledger accounted for, minus what the kept rows still account for.
+const totalBefore = new Ledger(LEDGER).read().spentUSD;
+const keptCost = keep.reduce((a, r) => a + (r.costUSD || 0), 0);
+const carried = Number((totalBefore - keptCost).toFixed(6));
+
 const carryRow = carried > 0
   ? JSON.stringify({
       carriedFrom: "requeue",

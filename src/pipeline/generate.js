@@ -35,16 +35,33 @@ const num = (n) => n.toLocaleString("en-US");
 const die = (m) => { console.error(`\n  ERROR  ${m}\n`); process.exit(1); };
 
 async function main() {
-  const { has, arg, number, choice } = parser(process.argv.slice(2));
+  const { has, arg, number, choice, endArgs } = parser(process.argv.slice(2));
 
   const limit = number("--limit", 0, { min: 0, integer: true });   // smoke tests use this
   const providerId = choice("--provider", ai.provider, PROVIDERS);
   const maxSpend = number("--max-spend", ai.maxSpendUSD, { min: 0 });
   const concurrency = number("--concurrency", ai.concurrency, { min: 1, max: 64, integer: true });
   const yes = has("--yes");
+  const noRef = has("--no-reference");
+  arg("--api-key", null);      // registered so endArgs does not call it unknown
+  endArgs();                   // reject typo'd flags before anything reads the plan
 
   if (!fs.existsSync(PLAN)) die(`no plan found. Run:  npm run ai:plan`);
   const plan = JSON.parse(fs.readFileSync(PLAN, "utf8"));
+
+  // argv is validated; the plan file is not, and `usdPerImage` is the number
+  // every spend guard multiplies. A plan missing it makes `projected` NaN, and
+  // every `> maxSpend` comparison against NaN is false — the ceiling, the
+  // per-task check and shouldStop all stop working at once.
+  if (!Number.isFinite(plan.usdPerImage) || plan.usdPerImage < 0) {
+    die(
+      `plan.json has no usable usdPerImage (${JSON.stringify(plan.usdPerImage)}).\n` +
+      `         Re-run:  npm run ai:plan`
+    );
+  }
+  if (!Array.isArray(plan.editions) || !plan.editions.length) {
+    die(`plan.json has no editions. Re-run:  npm run ai:plan`);
+  }
 
   const provider = getProvider(providerId);
   const apiKey = resolveKey(providerId, arg("--api-key", null));
@@ -59,7 +76,6 @@ async function main() {
   // collection. Rendering without it is how you pay for a thousand unrelated
   // pictures, so a paid run refuses to start until a master is approved.
   const refs = loadReferenceSet();
-  const noRef = has("--no-reference");
 
   const ledger = new Ledger(LEDGER);
   const { done, spentUSD, torn } = ledger.read();
@@ -159,6 +175,13 @@ async function main() {
             onRetry: (n, wait, err) => {
               // onRetry fires after an attempt failed and before the next one
               // runs, so the retry about to be dispatched is billable too.
+              // The reservation above covered one attempt only, so the ceiling
+              // has to be re-checked here — otherwise retries walk straight
+              // past it, by up to concurrency x (attempts-1) x unitCost.
+              if (spent + unitCost > maxSpend) {
+                halted = true;
+                throw new Error(`spend ceiling reached; not retrying #${job.edition}`);
+              }
               spent += unitCost;
               billedAttempts++;
               console.log(`    retry ${n} for #${job.edition} in ${wait}ms — ${redact(err.message)}`);
@@ -175,7 +198,12 @@ async function main() {
         // NaN reach the running total — that would disable the ceiling.
         const reported =
           typeof out.costUSD === "number" && Number.isFinite(out.costUSD) ? out.costUSD : null;
-        if (reported !== null) spent += reported - unitCost;
+        // Reconcile upward only. A reported 0 — which OpenRouter returns for
+        // BYOK and promo credit, and whenever it simply omits the field — would
+        // otherwise cancel the reservation and leave `spent` flat, so the
+        // ceiling never advances and the run never stops. A negative would
+        // actively raise the budget.
+        if (reported !== null && reported > unitCost) spent += reported - unitCost;
 
         const charged = (reported ?? unitCost) + (billedAttempts - 1) * unitCost;
 
@@ -240,4 +268,7 @@ async function main() {
   }
 }
 
-main().catch((e) => fail(e, redact));
+// Guarded: requiring this module must not start a paid run.
+if (require.main === module) main().catch((e) => fail(e, redact));
+
+module.exports = { main };

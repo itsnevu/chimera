@@ -34,11 +34,12 @@ const die = (msg) => {
 };
 
 function main() {
-  const { arg, number } = parser(process.argv.slice(2));
+  const { arg, number, endArgs } = parser(process.argv.slice(2));
 
   const editionSize = number("--size", ai.editionSize, { min: 1, max: 100000, integer: true });
   const modelId = arg("--model", ai.model);
   const maxSpend = number("--max-spend", ai.maxSpendUSD, { min: 0 });
+  endArgs();
 
   console.log(`\nCHIMERA — PLAN\n${"─".repeat(62)}`);
 

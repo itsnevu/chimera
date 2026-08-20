@@ -66,10 +66,10 @@ const verifyTraits = async ({
     // Low temperature: this is a judgement, not a creative task.
     temperature: 0,
     max_tokens: 700,
-    // Required for `usage.cost` to come back at all — QC has no catalogue
-    // price to fall back on, so without this its spend total is stuck at zero.
-    usage: { include: true },
   };
+  // `usage.cost` arrives automatically; the deprecated `usage: {include:true}`
+  // opt-in is a no-op. QC's spend safety comes from reserving
+  // USD_PER_QC_CALL up front, not from the provider reporting back.
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

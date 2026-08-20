@@ -37,13 +37,15 @@ const money = (n) => `$${n.toFixed(2)}`;
 const die = (m) => { console.error(`\n  ERROR  ${m}\n`); process.exit(1); };
 
 async function main() {
-  const { has, arg, number } = parser(process.argv.slice(2));
+  const { has, arg, number, endArgs } = parser(process.argv.slice(2));
 
   const verify = has("--verify");
   const twinDistance = number("--twin-distance", 5, { min: 0, max: 64, integer: true });
   const sample = number("--sample", 0, { min: 0, integer: true });
   const maxSpend = number("--max-spend", ai.maxSpendUSD, { min: 0 });
   const qcModel = arg("--qc-model", ai.qcModel || "google/gemini-3.1-flash-image");
+  has("--yes"); arg("--api-key", null);   // registered before the unknown-flag check
+  endArgs();
 
   if (!fs.existsSync(PLAN)) die("no plan found. Run:  npm run ai:plan");
   const plan = JSON.parse(fs.readFileSync(PLAN, "utf8"));
@@ -130,7 +132,7 @@ async function main() {
       console.log(`  Re-run with --yes to proceed.\n`);
     } else {
       const skip = plan.compositeLocally || [];
-      await pool(
+      const qcResult = await pool(
         checkable,
         async (rec) => {
           // Check before the call, not after — and against the reservation,
@@ -157,7 +159,11 @@ async function main() {
             // Reconcile the successful call against what was actually charged.
             const reported =
               typeof out.costUSD === "number" && Number.isFinite(out.costUSD) ? out.costUSD : null;
-            if (reported !== null) qcSpent += reported - USD_PER_QC_CALL;
+            // Upward only — see generate.js. A reported 0 would freeze qcSpent
+            // and a negative would hand the ceiling extra budget.
+            if (reported !== null && reported > USD_PER_QC_CALL) {
+              qcSpent += reported - USD_PER_QC_CALL;
+            }
             verified++;
 
             const absent = out.verdicts.filter((v) => v.present === false);
@@ -173,6 +179,11 @@ async function main() {
         },
         { concurrency: ai.concurrency, shouldStop: () => qcSpent + USD_PER_QC_CALL > maxSpend }
       );
+      // pool polls the same predicate before handing out an item, so it
+      // normally stops first and the in-worker flag never fires. Without
+      // this the HALTED banner never prints and the report claims a full
+      // pass, so unverified editions ship as clean.
+      if (qcResult.stopped) qcHalted = true;
       console.log(`  verified        ${num(verified)},  ${num(mismatches)} with a missing trait,  ${money(qcSpent)}`);
       if (qcHalted) {
         console.log(`  ! HALTED at the ${money(maxSpend)} ceiling — ${num(checkable.length - verified)} editions unchecked.`);
@@ -190,6 +201,11 @@ async function main() {
     checkedAt: new Date().toISOString(),
     checked: entries.length,
     verified,
+    // A halted verify pass checked only some editions. Recording that here
+    // keeps requeue and the UI from reading an incomplete failures list as a
+    // clean bill of health for the whole collection.
+    verifyComplete: !verify || !qcHalted,
+    unverified: verify ? Math.max(0, entries.length - verified) : 0,
     qcSpentUSD: Number(qcSpent.toFixed(4)),
     twinClusters: twins,
     failures,
@@ -212,4 +228,7 @@ async function main() {
   }
 }
 
-main().catch((e) => fail(e, redact));
+// Guarded: requiring this module must not start a paid verification run.
+if (require.main === module) main().catch((e) => fail(e, redact));
+
+module.exports = { main };

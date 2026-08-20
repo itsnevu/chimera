@@ -81,6 +81,14 @@ export async function POST(req: Request) {
   }
 
   if (action === "master" || action === "anchors") {
+    // Allowlisted, not passed through. The CLI matches flags positionally, so
+    // {"provider":"--approve"} would reach styleBible as `--provider --approve`
+    // and its `argv.includes("--approve")` check — evaluated before the value
+    // is ever validated — would mark the master approved. That is the gate a
+    // paid thousand-edition run depends on.
+    if (provider !== undefined && provider !== "mock" && provider !== "openrouter") {
+      return NextResponse.json({ error: "Unknown provider." }, { status: 400 });
+    }
     const paid = provider !== "mock";
     if (paid && !apiKey) {
       return NextResponse.json({ error: "Rendering the reference needs an API key." }, { status: 400 });

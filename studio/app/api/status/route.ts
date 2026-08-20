@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-import { readLedger, readJson, readConfig, getRunState, AI_DIR, REPO_ROOT } from "@/lib/engine";
+import { readLedger, readJson, readConfig, getRunState, usdPerQcCall, AI_DIR, REPO_ROOT } from "@/lib/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +31,7 @@ export async function GET() {
   const qc = readJson<{ checked: number; failures: { edition: number; reasons: string[] }[] }>("qc.json");
 
   return NextResponse.json({
-    config: cfg,
+    config: { ...cfg, usdPerQcCall: usdPerQcCall() },
     referenceUploaded: fs.existsSync(path.join(REPO_ROOT, cfg.reference.replace(/^\.\//, ""))),
     reference: {
       master: masterExists,

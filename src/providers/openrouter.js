@@ -70,11 +70,11 @@ const render = async ({
     n: 1,
     output_format: output.format === "jpeg" ? "jpeg" : "png",
     seed,
-    // Without this OpenRouter omits `usage.cost` entirely, so the ledger falls
-    // back to catalogue prices on every single row and `reportedCost` is null
-    // forever — the spend figures would never reflect what was actually billed.
-    usage: { include: true },
   };
+  // No `usage: {include: true}` here on purpose. It is deprecated and has no
+  // effect — OpenRouter now returns full usage details, `usage.cost` included,
+  // on every response automatically. Sending it is harmless but implies a
+  // dependency that does not exist.
 
   // Square output is the PFP norm; ask explicitly so aspect never drifts.
   if (output.width === output.height) body.aspect_ratio = "1:1";

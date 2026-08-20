@@ -123,4 +123,7 @@ async function main() {
   console.log(`\n  Collection is in build/images and build/json.\n`);
 }
 
-main().catch((e) => die(e.stack || e.message));
+// Guarded: requiring this module must not rewrite the shipped metadata.
+if (require.main === module) main().catch((e) => die(e.stack || e.message));
+
+module.exports = { main };

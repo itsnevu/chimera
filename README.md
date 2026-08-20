@@ -254,7 +254,7 @@ page.
 ### Tests
 
 ```sh
-npm test        # 43 tests, no dependencies
+npm test        # 59 tests, no dependencies
 ```
 
 Includes statistical checks that the weighted draw converges within 4 standard

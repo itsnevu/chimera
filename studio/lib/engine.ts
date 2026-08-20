@@ -11,6 +11,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 
 export const REPO_ROOT = path.resolve(process.cwd(), "..");
 export const AI_DIR = path.join(REPO_ROOT, "build", "ai");
@@ -115,9 +116,12 @@ export function readLedger(): { entries: LedgerEntry[]; spentUSD: number } {
     if (!line.trim()) continue;
     try {
       const rec = JSON.parse(line);
+      // Cost first, matching jobState.js. Skipping before summing excluded
+      // every failed-attempt row and every requeue carry row, so the UI
+      // under-reported real spend — by 98.7% on a ledger dominated by them.
+      spentUSD += rec.costUSD || 0;
       if (rec.edition == null) continue;
       entries.push(rec);
-      spentUSD += rec.costUSD || 0;
     } catch {
       // torn final line from a killed run — the engine tolerates it, so do we
     }
@@ -154,4 +158,21 @@ export function readConfig() {
     concurrency: (pick("concurrency") as number) ?? 4,
     reference: (pick("reference") as string) ?? "./reference.png",
   };
+}
+
+/**
+ * The engine's own per-QC-call reservation, read from the catalogue rather
+ * than duplicated here. The Studio previously priced trait verification at
+ * `plan.usdPerImage` — the *render* price — which over-quoted it 4x against
+ * what the engine actually reserves, in the one dialog whose job is to state
+ * the figure correctly before money moves.
+ */
+export function usdPerQcCall(): number {
+  try {
+    const require_ = createRequire(import.meta.url);
+    const models = require_(path.join(REPO_ROOT, "src", "providers", "models.js"));
+    return typeof models.USD_PER_QC_CALL === "number" ? models.USD_PER_QC_CALL : 0.01;
+  } catch {
+    return 0.01;
+  }
 }

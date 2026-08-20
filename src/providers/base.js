@@ -26,7 +26,10 @@ class ProviderError extends Error {
 const redact = (text = "") =>
   String(text)
     .replace(/sk-[A-Za-z0-9_\-]{8,}/g, "sk-***REDACTED***")
-    .replace(/Bearer\s+[A-Za-z0-9._\-]{8,}/gi, "Bearer ***REDACTED***");
+    .replace(/Bearer\s+[A-Za-z0-9._\-]{8,}/gi, "Bearer ***REDACTED***")
+    // A Pinata JWT carries no prefix — it is a bare eyJ… header.payload.sig,
+    // so the two rules above miss it entirely when a service echoes it back.
+    .replace(/eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]+/g, "***REDACTED-JWT***");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

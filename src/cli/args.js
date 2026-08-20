@@ -31,10 +31,29 @@ class UsageError extends Error {
  * @param {Array<String>} argv  process.argv.slice(2)
  */
 const parser = (argv) => {
-  const has = (flag) => argv.includes(flag);
+  // Every flag the caller actually asked about, so anything left over at the
+  // end can be reported as a typo rather than silently ignored.
+  const seen = new Set();
+
+  const has = (flag) => { seen.add(flag); return argv.includes(flag); };
 
   const raw = (flag, fallback) => {
-    const i = argv.indexOf(flag);
+    seen.add(flag);
+
+    // `--flag=value` is the form most people reach for, and ignoring it was
+    // dangerous rather than merely unhelpful: `--limit=5 --provider=mock`
+    // silently became an unlimited run against the *paid* provider.
+    const eq = argv.find((a) => a.startsWith(`${flag}=`));
+    if (eq !== undefined) {
+      const value = eq.slice(flag.length + 1);
+      if (!value) throw new UsageError(`${flag} needs a value`);
+      return value;
+    }
+
+    // lastIndexOf, not indexOf: `npm run x -- --max-spend 1` appends to a
+    // script that may already set it, and every shell convention is that the
+    // last occurrence wins. Taking the first silently kept the higher ceiling.
+    const i = argv.lastIndexOf(flag);
     if (i === -1) return fallback;
     const value = argv[i + 1];
     // A missing value, or the next flag, is a typo — never a value.
@@ -42,6 +61,23 @@ const parser = (argv) => {
       throw new UsageError(`${flag} needs a value`);
     }
     return value;
+  };
+
+  /**
+   * Reject anything that looks like a flag but was never read. A typo'd
+   * `--maxspend 5` would otherwise leave the real ceiling at its default while
+   * the user believes they lowered it.
+   */
+  const endArgs = () => {
+    const unknown = argv
+      .filter((a) => a.startsWith("--"))
+      .map((a) => a.split("=")[0])
+      .filter((a) => !seen.has(a));
+    if (unknown.length) {
+      throw new UsageError(
+        `unknown flag${unknown.length > 1 ? "s" : ""}: ${[...new Set(unknown)].join(", ")}`
+      );
+    }
   };
 
   /**
@@ -65,7 +101,20 @@ const parser = (argv) => {
     const { min = 0, max = Infinity, integer = false } = bounds;
     const value = raw(flag, fallback);
     // The fallback comes from config and is trusted; only argv is a string.
-    const n = typeof value === "number" ? value : Number(String(value).trim());
+    let n;
+    if (typeof value === "number") {
+      n = value;
+    } else {
+      const text = String(value).trim();
+      // Number() is far broader than "a number the user typed": it accepts
+      // 0x10 as 16, 0b111 as 7, and — the dangerous one — "" as 0, so
+      // `--max-spend "$UNSET_VAR"` became a silent $0 ceiling instead of an
+      // error. Decimal only.
+      if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(text)) {
+        throw new UsageError(`${flag} must be a number, got "${value}"`);
+      }
+      n = Number(text);
+    }
 
     if (!Number.isFinite(n)) throw new UsageError(`${flag} must be a number, got "${value}"`);
     if (integer && !Number.isInteger(n)) throw new UsageError(`${flag} must be a whole number, got ${n}`);
@@ -74,7 +123,7 @@ const parser = (argv) => {
     return n;
   };
 
-  return { has, arg: raw, number, choice };
+  return { has, arg: raw, number, choice, endArgs };
 };
 
 /**

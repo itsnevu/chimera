@@ -10,6 +10,7 @@ type Status = {
   config: {
     editionSize: number; model: string; provider: string;
     maxSpendUSD: number; rerollAllowance: number; concurrency: number; reference: string;
+    usdPerQcCall: number;
   };
   referenceUploaded: boolean;
   reference: { master: boolean; approved: boolean; anchors: string[]; spentUSD: number };
@@ -46,6 +47,10 @@ export default function Studio() {
   const [ship, setShip] = useState<{ editions: number; placeholders: number; pinned: number } | null>(null);
   const [jwt, setJwt] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Where focus was when the dialog opened, so cancelling returns the user
+  // there instead of dumping them at the top of the document.
+  const returnFocusTo = useRef<HTMLElement | null>(null);
   // Seeding the size field is a one-shot: re-seeding on every poll would
   // overwrite whatever the user is in the middle of typing.
   const sizeSeeded = useRef(false);
@@ -97,6 +102,17 @@ export default function Studio() {
       });
     return () => ac.abort();
   }, [status?.plan, status?.run.exitCode]);
+
+  // Focus the dialog once when it opens, and hand focus back when it closes.
+  // A `ref={el => el?.focus()}` callback would look equivalent but is a new
+  // function identity every render, so React re-attaches it on every poll tick
+  // and keeps yanking focus back from whatever the user Tabbed to.
+  useEffect(() => {
+    if (!pending) return;
+    returnFocusTo.current = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+    return () => returnFocusTo.current?.focus();
+  }, [pending]);
 
   // Keyed on the last line, not the count: the engine caps the buffer at 400
   // lines, so length stops changing exactly when the run gets interesting.
@@ -166,7 +182,9 @@ export default function Studio() {
 
   const smokeCount = Math.min(5, remaining);
   const smokeCost = paid ? smokeCount * unit : 0;
-  const qcUnit = plan?.usdPerImage ?? 0;
+  // The engine reserves USD_PER_QC_CALL per verification, not the render
+  // price — quoting usdPerImage here over-stated the cost by 4x.
+  const qcUnit = config.usdPerQcCall ?? 0.01;
   const qcCost = status.rendered * qcUnit;
 
   // Nothing that costs money or destroys work may be dispatched straight from a
@@ -676,10 +694,24 @@ export default function Studio() {
           aria-modal="true"
           aria-labelledby="confirm-title"
           tabIndex={-1}
-          // Focus the dialog on mount so Escape works and screen readers land
-          // inside it rather than continuing behind the overlay.
-          ref={(el) => el?.focus()}
-          onKeyDown={(e) => e.key === "Escape" && setPending(null)}
+          ref={dialogRef}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") { setPending(null); return; }
+            if (e.key !== "Tab") return;
+            // Trap Tab inside the dialog. Without this, Tab leaves for the
+            // sidebar behind the scrim — where the API key field sits. Editing
+            // it there would not change the key this confirmation already
+            // captured, so the run would bill against the old one.
+            const focusable = dialogRef.current?.querySelectorAll<HTMLElement>("button");
+            if (!focusable?.length) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+              e.preventDefault(); last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+              e.preventDefault(); first.focus();
+            }
+          }}
           style={{
             position: "fixed", inset: 0, zIndex: 50, display: "grid", placeItems: "center",
             background: "rgba(0,0,0,0.72)", padding: 18,
