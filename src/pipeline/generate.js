@@ -22,6 +22,7 @@ const { getProvider, resolveKey } = require(`${basePath}/src/providers/index.js`
 const { Ledger } = require(`${basePath}/src/pipeline/jobState.js`);
 const { pool } = require(`${basePath}/src/pipeline/queue.js`);
 const { withRetry, redact } = require(`${basePath}/src/providers/base.js`);
+const { loadReferenceSet } = require(`${basePath}/src/reference/styleBible.js`);
 
 const AI_DIR = `${basePath}/build/ai`;
 const PLAN = `${AI_DIR}/plan.json`;
@@ -55,6 +56,12 @@ async function main() {
     );
   }
 
+  // The reference set is what holds the character steady across the whole
+  // collection. Rendering without it is how you pay for a thousand unrelated
+  // pictures, so a paid run refuses to start until a master is approved.
+  const refs = loadReferenceSet();
+  const noRef = has("--no-reference");
+
   const ledger = new Ledger(LEDGER);
   const { done, spentUSD, torn } = ledger.read();
 
@@ -72,6 +79,7 @@ async function main() {
   if (torn) console.log(`  ! ledger        ${torn} truncated line(s) skipped — a previous run was killed`);
   console.log(`  to render       ${num(queue.length)}${limit ? `  (--limit ${limit})` : ""}`);
   console.log(`  unit cost       ${money(unitCost)}`);
+  console.log(`  references      ${refs.approved ? `${refs.buffers.length} (${refs.names.join(", ")})` : "NONE"}`);
   console.log(`  projected total ${money(projected)}   ceiling ${money(maxSpend)}`);
 
   if (!queue.length) {
@@ -84,6 +92,20 @@ async function main() {
       `this run would reach ${money(projected)}, above your ceiling of ${money(maxSpend)}.\n` +
       `         Nothing was rendered. Lower --limit, or raise maxSpendUSD deliberately.`
     );
+  }
+
+  if (unitCost > 0 && !refs.approved && !noRef) {
+    die(
+      `no approved style reference — every edition would be rendered from the\n` +
+      `         prompt alone, with nothing holding the character consistent.\n` +
+      `         That is ${money(queue.length * unitCost)} of unrelated pictures.\n\n` +
+      `         Fix it:   npm run ai:ref              render a master from your image\n` +
+      `                   npm run ai:ref -- --approve  after you have looked at it\n\n` +
+      `         Or pass --no-reference if you genuinely want prompt-only renders.`
+    );
+  }
+  if (unitCost > 0 && noRef) {
+    console.log(`  ! --no-reference: character consistency is not being enforced`);
   }
 
   // Real money gets an explicit confirmation unless --yes.
@@ -116,7 +138,7 @@ async function main() {
               negative: job.negative,
               seed: job.seed,
               traits: job.traits,
-              references: [],
+              references: refs.buffers,
               output: plan.output,
               model: plan.model,
               apiKey,

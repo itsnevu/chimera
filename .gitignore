@@ -144,3 +144,6 @@ dist
 # AI mode working directory
 build/ai/
 .chimera/
+
+# your own reference image
+reference.png

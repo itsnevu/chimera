@@ -554,6 +554,79 @@ test("a trait the QC model ignored counts as unverified, not a pass", () => {
   return "unmentioned trait -> present:null";
 });
 
+
+// ─────────────────────────────────────────────── style bible (lever 1) ────
+
+const { prepare } = require(`${basePath}/src/reference/prepareReference.js`);
+const { loadReferenceSet, masterPrompt } = require(`${basePath}/src/reference/styleBible.js`);
+
+test("reference normalisation centre-crops to a square", async () => {
+  const wide = createCanvas(900, 600);
+  const wx = wide.getContext("2d");
+  wx.fillStyle = "#88AACC"; wx.fillRect(0, 0, 900, 600);
+  const dir = tmpdir();
+  const src = `${dir}/wide.png`;
+  fs.writeFileSync(src, wide.toBuffer("image/png"));
+
+  const out = await prepare(src, { size: 256 });
+  assert.strictEqual(out.original.width, 900);
+  assert.strictEqual(out.cropped, true, "a 3:2 image should report as cropped");
+  const back = await require(`${basePath}/node_modules/canvas`).loadImage(out.buffer);
+  assert.strictEqual(back.width, 256);
+  assert.strictEqual(back.height, 256, "output must be square, never squashed");
+  return "900x600 -> 256x256, centre-cropped";
+});
+
+test("an already-square reference is not reported as cropped", async () => {
+  const sq = createCanvas(512, 512);
+  sq.getContext("2d").fillRect(0, 0, 512, 512);
+  const dir = tmpdir();
+  const src = `${dir}/sq.png`;
+  fs.writeFileSync(src, sq.toBuffer("image/png"));
+  const out = await prepare(src, { size: 256 });
+  assert.strictEqual(out.cropped, false);
+  return "square in, square out";
+});
+
+test("normalisation fails loudly on a missing file", async () => {
+  await assert.rejects(prepare("/nope/missing.png"), /not found/);
+  return "throws rather than rendering nothing";
+});
+
+test("master prompt asks for a neutral sheet, not artwork", () => {
+  const p = masterPrompt();
+  ["front-facing", "neutral", "no headwear", "no clothing", "no accessories", "plain flat neutral grey"]
+    .forEach((phrase) => assert.ok(p.includes(phrase), `master prompt is missing "${phrase}"`));
+  assert.ok(p.includes(traitConfig.styleAnchor), "master must carry the same style anchor");
+  return "neutral pose, bare, plain background, anchored";
+});
+
+test("reference set is empty until a master is approved", () => {
+  // loadReferenceSet reads build/ai/reference/state.json. Whatever state the
+  // working tree is in, the contract must hold: not approved => no buffers.
+  const set = loadReferenceSet();
+  if (!set.approved) {
+    assert.deepStrictEqual(set.buffers, [], "unapproved set handed out buffers");
+    assert.deepStrictEqual(set.names, []);
+    return "unapproved -> zero references";
+  }
+  assert.ok(set.buffers.length >= 1, "approved set must include the master");
+  assert.strictEqual(set.names[0], "master", "master must come first");
+  set.buffers.forEach((b) => assert.ok(Buffer.isBuffer(b) && b.length > 100));
+  return `approved -> ${set.buffers.length} references, master first`;
+});
+
+test("a paid run without references is refused, not silently allowed", () => {
+  // The bug this guards: references was hard-coded to [] in generate.js, so a
+  // $40 run would have produced a thousand unrelated pictures.
+  const src = fs.readFileSync(`${basePath}/src/pipeline/generate.js`, "utf8");
+  assert.ok(!/references:\s*\[\]/.test(src), "generate.js still sends an empty reference array");
+  assert.ok(src.includes("refs.buffers"), "generate.js does not pass the loaded reference set");
+  assert.ok(/no approved style reference/.test(src), "no guard against rendering without a reference");
+  assert.ok(src.includes("--no-reference"), "no deliberate opt-out for prompt-only runs");
+  return "empty-array bug cannot return";
+});
+
 // ───────────────────────────────────────────────────────────────── report ────
 
 (async () => {

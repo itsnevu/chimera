@@ -28,7 +28,8 @@
     "ai:smoke": "node src/pipeline/generate.js --limit 5",
     "ai:doctor": "node src/cli/doctor.js",
     "ai:qc": "node src/pipeline/qc.js",
-    "ai:requeue": "node src/cli/requeue.js"
+    "ai:requeue": "node src/cli/requeue.js",
+    "ai:ref": "node src/reference/styleBible.js"
   },
   "author": "navy",
   "license": "MIT",

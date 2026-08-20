@@ -12,6 +12,7 @@ Chimera is being built in two stages. Be clear on which one you're using.
 |---|---|---|
 | **Layer mode** | Composites transparent PNG layers you supply. Free, instant, fully deterministic. | ✅ **Working** |
 | **AI mode** | Rolls traits, builds prompts, renders through an image model, writes matching metadata. | ✅ **Working** — end to end |
+| **Style bible** | Turns your upload into an approved master reference that every render is conditioned on. | ✅ **Working** |
 | **QC** | Flat-render and visual-twin detection (free), plus a vision-model check that each render contains the traits its metadata claims. | ✅ **Working** |
 
 Both modes work. The pipeline has been run end to end for 1,000 editions on the
@@ -129,6 +130,10 @@ budget in [`src/ai.config.js`](src/ai.config.js), then:
 ```sh
 npm run ai:doctor                        # pre-flight: traits, space, key, budget
 npm run ai:plan                          # roll offline, estimate cost. FREE
+
+npm run ai:ref                           # normalise your image + render a master
+npm run ai:ref -- --approve              # after you have LOOKED at it
+npm run ai:ref -- --anchors              # optional: how it wears things
 npm run ai:generate -- --provider mock   # full dry run. FREE
 npm run ai:finalize                      # composite backgrounds, write metadata
 
@@ -173,6 +178,27 @@ that turns "metadata matches the request" into "metadata matches the picture".
 `ai:requeue` backs up the ledger, moves rejected images to `build/ai/rejects/`
 rather than deleting them, and prints the re-render cost before doing anything.
 
+### The style bible
+
+Put your character at the path in `ai.reference`, then run `ai:ref`. It
+centre-crops and squares your upload locally for free, then spends **one** call
+turning it into a canonical model sheet — front-facing, neutral, bare, plain
+background.
+
+Then it stops and makes you look at it. Every paid edition is rendered against
+that master, so if the character is wrong there, all of them are wrong. A paid
+run refuses to start until you have approved it:
+
+```
+ERROR  no approved style reference — every edition would be rendered from the
+       prompt alone, with nothing holding the character consistent.
+       That is $40.00 of unrelated pictures.
+```
+
+Re-rendering the master automatically revokes approval — a reference you have
+not seen never becomes the basis for a thousand images. `--no-reference` opts
+out deliberately if you really do want prompt-only renders.
+
 ### The spend ceiling
 
 `maxSpendUSD` in `src/ai.config.js` is a hard ceiling, not a warning. It is
@@ -203,7 +229,7 @@ is in [docs/ai-mode-plan.md](docs/ai-mode-plan.md).
 ### Tests
 
 ```sh
-npm test        # 37 tests, no dependencies
+npm test        # 43 tests, no dependencies
 ```
 
 Includes statistical checks that the weighted draw converges within 4 standard
