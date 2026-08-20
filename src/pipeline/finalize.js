@@ -100,6 +100,16 @@ async function main() {
     metadataList.push(metadata);
   }
 
+  // Overwriting the manifest with [] destroys the record of a collection that
+  // cost real money, prints "max drift NaN pts" from the divide-by-zero below,
+  // and still exits 0.
+  if (!metadataList.length) {
+    die(
+      `every ledger entry is missing its image on disk — refusing to overwrite\n` +
+      `         build/json/_metadata.json with an empty collection.`
+    );
+  }
+
   writeAtomic(`${JSON_DIR}/_metadata.json`, JSON.stringify(metadataList, null, 2));
 
   console.log(`  wrote           ${num(metadataList.length)} images + metadata`);

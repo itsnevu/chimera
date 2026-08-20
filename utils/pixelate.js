@@ -6,6 +6,7 @@ const buildDir = `${basePath}/build/pixel_images`;
 const inputDir = `${basePath}/build/images`;
 const { format, pixelFormat } = require(`${basePath}/src/config.js`);
 const console = require("console");
+// Sized per image in draw(); format is only the fallback for an empty run.
 const canvas = createCanvas(format.width, format.height);
 const ctx = canvas.getContext("2d");
 
@@ -13,7 +14,7 @@ const buildSetup = () => {
   if (fs.existsSync(buildDir)) {
     fs.rmSync(buildDir, { recursive: true });
   }
-  fs.mkdirSync(buildDir);
+  fs.mkdirSync(buildDir, { recursive: true });
 };
 
 const getImages = (_dir) => {
@@ -50,11 +51,27 @@ const loadImgData = async (_imgObject) => {
 };
 
 const draw = (_imgObject) => {
-  let size = pixelFormat.ratio;
-  let w = canvas.width * size;
-  let h = canvas.height * size;
+  const img = _imgObject.loadedImage;
+
+  // Match the source, not src/config.js. The canvas was fixed at format.width,
+  // so 1024px AI renders were silently downscaled to 512.
+  if (canvas.width !== img.width || canvas.height !== img.height) {
+    canvas.width = img.width;
+    canvas.height = img.height;
+  }
+  // The canvas is shared across every image and was never cleared, so any
+  // transparency let the previous image show through — a transparent frame
+  // after a magenta one came out solid magenta.
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const size = pixelFormat.ratio;
+  // Round: canvas.width * ratio is only an integer by coincidence (500 * 2/128
+  // is 7.8125), and a fractional source rect blurs the "pixels".
+  const w = Math.max(1, Math.round(canvas.width * size));
+  const h = Math.max(1, Math.round(canvas.height * size));
+
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(_imgObject.loadedImage, 0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
   ctx.drawImage(canvas, 0, 0, w, h, 0, 0, canvas.width, canvas.height);
 };
 

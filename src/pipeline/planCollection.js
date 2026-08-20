@@ -57,11 +57,21 @@ function main() {
     `${layers.reduce((a, l) => a + l.elements.length, 0)} values`);
   console.log(`  combinations    ${num(space.total)} total` +
     (rules.length ? `, ~${num(space.usable)} valid after ${rules.length} constraints` : ""));
+  // The effective figure is what governs whether the roll can actually finish:
+  // heavily skewed weights make most combinations unreachable in practice.
+  if (space.effective < space.usable) {
+    console.log(`  reachable       ~${num(space.effective)} given the weights ` +
+      `(skewed weights shrink what the roll can actually reach)`);
+  }
 
   if (!space.ok) {
     die(
-      `cannot produce ${num(editionSize)} unique editions — only ~${num(space.usable)} ` +
-      `valid combinations exist.\n         Add trait values, or lower editionSize.`
+      `cannot produce ${num(editionSize)} unique editions — the weighted trait\n` +
+      `         space only reaches about ${num(space.effective)} distinct combinations` +
+      (space.effective < space.usable
+        ? `,\n         even though ${num(space.usable)} exist on paper. Flatten the weights,`
+        : `.\n         Add trait values,`) +
+      ` or lower editionSize.`
     );
   }
   if (space.headroom > 0.5) {

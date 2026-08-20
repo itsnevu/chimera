@@ -18,7 +18,14 @@ data.forEach((item) => {
   if (network == NETWORK.sol) {
     item.name = `${namePrefix} #${item.edition}`;
     item.description = description;
-    item.creators = solanaMetadata.creators;
+    // The engine writes the royalty split to properties.creators
+    // (src/core/metadata.js); a top-level `creators` key is ignored by
+    // Metaplex, so setting it here left royalties pointing at the old wallet.
+    item.properties = item.properties || {};
+    item.properties.creators = solanaMetadata.creators;
+    item.symbol = solanaMetadata.symbol;
+    item.seller_fee_basis_points = solanaMetadata.seller_fee_basis_points;
+    item.external_url = solanaMetadata.external_url;
   } else {
     item.name = `${namePrefix} #${item.edition}`;
     item.description = description;

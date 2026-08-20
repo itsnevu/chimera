@@ -11,17 +11,34 @@ const ChimeraGiffer = require(`${basePath}/modules/ChimeraGiffer.js`);
 let chimeraGiffer = null;
 
 const loadImg = async (_img) => {
-  return new Promise(async (resolve) => {
-    const loadedImage = await loadImage(`${_img}`);
-    resolve({ loadedImage: loadedImage });
-  });
+  // A `new Promise(async ...)` wrapper can never reject: the await lives in the
+  // executor, so a decode failure escaped as an unhandled rejection.
+  const loadedImage = await loadImage(`${_img}`);
+  return { loadedImage };
 };
 
-// read image paths
-const imageList = [];
-const rawdata = fs.readdirSync(imageDir).forEach((file) => {
-  imageList.push(loadImg(`${imageDir}/${file}`));
-});
+/**
+ * Filenames only, ordered and trimmed to what the gif will actually use.
+ *
+ * Every PNG in build/images used to be decoded into memory at module load,
+ * before the array was sliced to numberOfImages — 1.3 GB resident to produce a
+ * five-frame gif, and an OOM on a large collection. Extensions are filtered
+ * too: a stray .DS_Store killed the run with "Unsupported image type".
+ */
+const selectFrames = () => {
+  const { numberOfImages, order } = preview_gif;
+  let files = fs
+    .readdirSync(imageDir)
+    .filter((f) => /\.(png|jpg|jpeg)$/i.test(f))
+    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+
+  if (order === "DESC") files.reverse();
+  else if (order === "MIXED") files = files.sort(() => Math.random() - 0.5);
+
+  const want = parseInt(numberOfImages, 10);
+  if (want > 0) files = files.slice(0, want);
+  return files;
+};
 
 const saveProjectPreviewGIF = async (_data) => {
   // Extract from preview config
@@ -57,19 +74,8 @@ const saveProjectPreviewGIF = async (_data) => {
     chimeraGiffer.start();
 
     await Promise.all(_data).then((renderObjectArray) => {
-      // Determin the order of the Images before creating the gif
-      if (order == "ASC") {
-        // Do nothing
-      } else if (order == "DESC") {
-        renderObjectArray.reverse();
-      } else if (order == "MIXED") {
-        renderObjectArray = renderObjectArray.sort(() => Math.random() - 0.5);
-      }
-
-      // Reduce the size of the array of Images to the desired amount
-      if (parseInt(numberOfImages) > 0) {
-        renderObjectArray = renderObjectArray.slice(0, numberOfImages);
-      }
+      // Ordering and trimming already happened on filenames in selectFrames(),
+      // so only the frames that end up in the gif are ever decoded.
 
       renderObjectArray.forEach((renderObject, index) => {
         ctx.globalAlpha = 1;
@@ -88,4 +94,10 @@ const saveProjectPreviewGIF = async (_data) => {
   }
 };
 
-saveProjectPreviewGIF(imageList);
+const frames = selectFrames();
+if (!frames.length) {
+  console.error("\n  ERROR  no images in build/images to build a gif from.\n");
+  process.exitCode = 1;
+} else {
+  saveProjectPreviewGIF(frames.map((f) => loadImg(`${imageDir}/${f}`)));
+}

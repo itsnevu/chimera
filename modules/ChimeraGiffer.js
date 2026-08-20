@@ -1,5 +1,5 @@
 const GifEncoder = require("gif-encoder-2");
-const { writeFile } = require("fs");
+const { writeFileSync } = require("fs");
 
 class ChimeraGiffer {
   constructor(_canvas, _ctx, _fileName, _repeat, _quality, _delay) {
@@ -30,8 +30,16 @@ class ChimeraGiffer {
   stop = () => {
     this.gifEncoder.finish();
     const buffer = this.gifEncoder.out.getData();
-    writeFile(this.fileName, buffer, (error) => {});
-    console.log(`Created gif at ${this.fileName}`);
+    // Was writeFile with an empty callback: the error was discarded and the
+    // success line printed before the write had settled, so an unwritable
+    // path logged "Created gif at ..." and exited 0 with no file.
+    try {
+      writeFileSync(this.fileName, buffer);
+      console.log(`Created gif at ${this.fileName}`);
+    } catch (err) {
+      console.error(`Could not write gif at ${this.fileName} — ${err.message}`);
+      process.exitCode = 1;
+    }
   };
 }
 

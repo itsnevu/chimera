@@ -20,8 +20,14 @@ const decode = (dna, layers) => {
 };
 
 const matches = (picked, when) =>
-  Object.keys(when).every((trait) => {
+  // A rule with no `when` would throw on Object.keys(undefined); treat it as
+  // matching nothing rather than crashing the roll.
+  Object.keys(when || {}).every((trait) => {
     const wanted = Array.isArray(when[trait]) ? when[trait] : [when[trait]];
+    // `[undefined].includes(picked[trait])` is true for any trait the rule
+    // names but `decode` could not resolve, which would fire the rule on
+    // 100% of rolls. validate() rejects these up front; this is the backstop.
+    if (wanted.some((w) => w === undefined || w === null)) return false;
     return wanted.includes(picked[trait]);
   });
 

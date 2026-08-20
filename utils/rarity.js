@@ -33,9 +33,25 @@ const editionSize = data.length;
  * @returns {{source: String, traits: Array<{name, options: Array<{trait, weight}>}>}}
  */
 function loadTraitDefinitions() {
-  // An AI plan is the strongest signal: it records exactly what was rolled.
-  if (fs.existsSync(PLAN) && fs.existsSync(TRAITS)) {
+  // A leftover build/ai/plan.json outlives the collection it described, so
+  // "does a plan exist" is the wrong test — it scored layer-mode collections
+  // against AI trait names and reported every option at 0.0% actual.
+  // Ask instead which definition matches the trait_type values actually
+  // present in the metadata we are about to score.
+  const present = new Set();
+  data.forEach((item) =>
+    (item.attributes || []).forEach((a) => a.trait_type && present.add(a.trait_type))
+  );
+  const overlap = (names) => names.filter((n) => present.has(n)).length;
+
+  if (fs.existsSync(TRAITS)) {
     const cfg = require(TRAITS);
+    const aiNames = cfg.traits.map((t) => t.name);
+    const layerNames = [];
+    layerConfigurations.forEach((c) =>
+      c.layersOrder.forEach((l) => layerNames.push(l.options?.displayName ?? l.name))
+    );
+    if (overlap(aiNames) > overlap(layerNames)) {
     return {
       source: "chimera.traits.js (AI mode)",
       traits: cfg.traits.map((t) => ({
@@ -43,6 +59,7 @@ function loadTraitDefinitions() {
         options: t.options.map((o) => ({ trait: o.value, weight: o.weight })),
       })),
     };
+    }
   }
 
   // Layer mode: read the weights off the filenames.
@@ -91,11 +108,23 @@ const unexpected = new Set(
 traits.forEach((trait) => {
   unexpected.delete(trait.name);
   const totalWeight = trait.options.reduce((a, o) => a + o.weight, 0);
-  console.log(`Trait type: ${trait.name}`);
+  if (!(totalWeight > 0)) {
+    console.log(`Trait type: ${trait.name}\n  (all weights are zero — nothing to compare)\n`);
+    return;
+  }
+  // Only editions that carry this trait at all form the denominator: a trait
+  // introduced by a second layerConfiguration is not "missing" from the
+  // editions that predate it.
+  const eligible = data.filter((item) =>
+    (item.attributes || []).some((a) => a.trait_type === trait.name)
+  ).length || editionSize;
+
+  console.log(`Trait type: ${trait.name}` +
+    (eligible !== editionSize ? `   (on ${eligible} of ${editionSize} editions)` : ""));
   trait.options.forEach((o) => {
     const count = counts.get(`${trait.name}|${o.trait}`) || 0;
     const target = (o.weight / totalWeight) * 100;
-    const actual = (count / editionSize) * 100;
+    const actual = (count / eligible) * 100;
     const drift = actual - target;
     worstDrift = Math.max(worstDrift, Math.abs(drift));
     const flag = Math.abs(drift) > 2 ? "  <-- off" : "";

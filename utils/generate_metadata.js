@@ -19,7 +19,8 @@ const buildSetup = () => {
   if (fs.existsSync(buildDir)) {
     fs.rmSync(buildDir, { recursive: true });
   }
-  fs.mkdirSync(buildDir);
+  // recursive: matches src/main.js, and works on a fresh clone with no build/
+  fs.mkdirSync(buildDir, { recursive: true });
 };
 
 const getImages = (_dir) => {
@@ -135,7 +136,9 @@ const saveMetadata = (_loadedImageObject) => {
   );
 
   let tempAttributes = [];
-  tempAttributes.push(addRarity());
+  // Spread, not push: pushing the array produced attributes: [[{...}]], which
+  // every marketplace parses as zero traits.
+  tempAttributes.push(...addRarity());
 
   let tempMetadata = {
     name: `${namePrefix} #${shortName}`,
@@ -157,11 +160,31 @@ const writeMetaData = (_data) => {
 };
 
 const startCreating = async () => {
+  // Read BEFORE anything is deleted. buildSetup() used to run first, so a run
+  // with no images still wiped build/json and then printed a cheerful
+  // "Please generate collection first." with exit code 0.
   const images = getImages(inputDir);
-  if (images == null) {
-    console.log("Please generate collection first.");
+  if (images == null || !images.length) {
+    console.error(
+      "\n  ERROR  no images in build/images — nothing to build metadata from.\n" +
+      "         Nothing was deleted. Run:  npm run build\n"
+    );
+    process.exitCode = 1;
     return;
   }
+
+  // This rewrites build/json wholesale. If an AI run paid for that metadata,
+  // refuse rather than destroy it — the same guard src/main.js applies.
+  if (fs.existsSync(`${basePath}/build/ai/ledger.jsonl`)) {
+    console.error(
+      "\n  ERROR  build/ai/ledger.jsonl exists, so build/json holds metadata from a\n" +
+      "         paid AI run. Refusing to clear it. Use:  npm run ai:finalize\n"
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  buildSetup();
   let loadedImageObjects = [];
   images.forEach((imgObject) => {
     loadedImageObjects.push(loadImgData(imgObject));
@@ -178,5 +201,4 @@ const startCreating = async () => {
   writeMetaData(JSON.stringify(metadataList, null, 2));
 };
 
-buildSetup();
 startCreating();

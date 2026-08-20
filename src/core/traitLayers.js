@@ -68,6 +68,54 @@ const validate = (traitConfig) => {
       }
     });
   });
+
+  // Constraint keys were never checked against the traits they name, and the
+  // three ways to misspell one fail in three different silent directions:
+  // a typo in `when` or `forbid` is a no-op that ships the clash it was meant
+  // to block, while a typo in `require` rejects 100% of everything matching
+  // `when`. All of it is invisible until the rarity report looks wrong.
+  const optionsOf = new Map(
+    (traitConfig.traits || []).map((t) => [t.name, new Set((t.options || []).map((o) => o.value))])
+  );
+  const checkClause = (clause, label, i, valuesMustExist) => {
+    if (clause === undefined) return;
+    if (typeof clause !== "object" || clause === null) {
+      errors.push(`constraint ${i} has a non-object "${label}"`);
+      return;
+    }
+    Object.entries(clause).forEach(([trait, want]) => {
+      if (!optionsOf.has(trait)) {
+        errors.push(`constraint ${i} "${label}" names unknown trait "${trait}"`);
+        return;
+      }
+      if (!valuesMustExist) return;
+      const values = Array.isArray(want) ? want : [want];
+      values.forEach((v) => {
+        if (v === undefined || v === null) {
+          errors.push(`constraint ${i} "${label}.${trait}" has an empty value`);
+        } else if (!optionsOf.get(trait).has(v)) {
+          errors.push(`constraint ${i} "${label}.${trait}" names unknown value "${v}"`);
+        }
+      });
+    });
+  };
+
+  (traitConfig.constraints || []).forEach((rule, i) => {
+    if (!rule || typeof rule !== "object") {
+      errors.push(`constraint ${i} is not an object`);
+      return;
+    }
+    if (!rule.when || typeof rule.when !== "object") {
+      errors.push(`constraint ${i} has no "when" clause`);
+    }
+    if (!rule.forbid && !rule.require) {
+      errors.push(`constraint ${i} has neither "forbid" nor "require"`);
+    }
+    checkClause(rule.when, "when", i, true);
+    checkClause(rule.forbid, "forbid", i, true);
+    checkClause(rule.require, "require", i, true);
+  });
+
   return errors;
 };
 
