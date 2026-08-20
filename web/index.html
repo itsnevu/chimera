@@ -1,0 +1,610 @@
+<title>Chimera Forge</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;600;800&family=Archivo:wght@400;500;600&display=swap">
+
+<style>
+/* Chimera is a darkroom console. One accent. Every other colour on this page
+   is produced by the collection itself. */
+:root{
+  --void:#08070A;
+  --pane:#0D0C10;
+  --pane-2:#131218;
+  --rule:#1D1B22;
+  --rule-2:#2A272F;
+  --ink:#EAE7ED;
+  --ink-2:#8E8896;
+  --ink-3:#5C5765;
+  --ember:#FF4D00;
+  --ember-dim:rgba(255,77,0,.12);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--void);color:var(--ink);
+  font-family:Archivo,ui-sans-serif,system-ui,sans-serif;
+  font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{margin:0;font-family:"Martian Mono",ui-monospace,monospace;font-weight:800;letter-spacing:-.05em;line-height:1.08}
+p{margin:0}
+.m{font-family:"Martian Mono",ui-monospace,SFMono-Regular,monospace;font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+
+/* ---------------- masthead ---------------- */
+.top{
+  display:flex;align-items:stretch;border-bottom:1px solid var(--rule);
+  position:sticky;top:0;background:var(--void);z-index:20;
+}
+.logo{
+  display:flex;align-items:center;gap:9px;padding:13px 18px;
+  border-right:1px solid var(--rule);text-decoration:none;
+  font-family:"Martian Mono",monospace;font-weight:800;font-size:14px;letter-spacing:-.06em;
+}
+.logo i{width:9px;height:9px;background:var(--ember);display:block;flex:none}
+.ticker{
+  flex:1;min-width:0;display:flex;align-items:center;gap:22px;padding:0 18px;overflow:hidden;
+  font-family:"Martian Mono",monospace;font-size:10.5px;color:var(--ink-3);white-space:nowrap;
+}
+.ticker b{color:var(--ink-2);font-weight:400}
+.ticker span{color:var(--ember)}
+@media(max-width:900px){.ticker{display:none}}
+
+/* ---------------- app split ---------------- */
+.app{display:grid;grid-template-columns:352px minmax(0,1fr)}
+@media(max-width:980px){.app{grid-template-columns:1fr}}
+
+.ctrl{border-right:1px solid var(--rule);align-self:start;position:sticky;top:45px}
+@media(max-width:980px){.ctrl{position:static;border-right:none;border-bottom:1px solid var(--rule)}}
+
+.blk{padding:18px;border-bottom:1px solid var(--rule)}
+.blk:last-child{border-bottom:none}
+.lbl{
+  font-family:"Martian Mono",monospace;font-size:9.5px;letter-spacing:.06em;
+  color:var(--ink-3);text-transform:uppercase;display:block;margin-bottom:11px;
+}
+
+/* reference slot */
+.slot{
+  display:flex;align-items:center;gap:13px;width:100%;text-align:left;
+  background:var(--pane);border:1px solid var(--rule-2);padding:11px;
+  transition:border-color .14s,background .14s;
+}
+.slot:hover,.slot.over{border-color:var(--ember);background:var(--ember-dim)}
+.slot figure{
+  margin:0;width:46px;height:46px;flex:none;background:var(--pane-2);
+  display:grid;place-items:center;overflow:hidden;
+}
+.slot figure img{width:100%;height:100%;object-fit:cover;display:block}
+.slot figure svg{width:17px;height:17px;color:var(--ink-3)}
+.slot div{min-width:0}
+.slot strong{display:block;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slot small{display:block;font-size:11.5px;color:var(--ink-3);margin-top:1px}
+
+/* edition size */
+.size{display:flex;align-items:baseline;gap:9px}
+.size input{
+  width:100%;min-width:0;background:none;border:none;padding:0;color:var(--ink);
+  font-family:"Martian Mono",monospace;font-weight:800;font-size:40px;letter-spacing:-.07em;
+}
+.size input:focus{outline:none;color:var(--ember)}
+.size input::-webkit-outer-spin-button,.size input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.size input[type=number]{-moz-appearance:textfield}
+.size em{font-style:normal;font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+.steps{display:flex;margin-top:12px;border:1px solid var(--rule-2)}
+.steps button{
+  flex:1;background:none;border:none;border-right:1px solid var(--rule-2);
+  padding:7px 0;font-family:"Martian Mono",monospace;font-size:10.5px;color:var(--ink-3);
+  transition:.14s;
+}
+.steps button:last-child{border-right:none}
+.steps button:hover{color:var(--ink)}
+.steps button[aria-pressed=true]{background:var(--ember);color:var(--void);font-weight:600}
+
+/* model rows */
+.mdl{
+  display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;
+  border:none;border-bottom:1px solid var(--rule);padding:10px 0;transition:.14s;
+}
+.mdl:last-of-type{border-bottom:none}
+.mdl:hover .mdl-n{color:var(--ink)}
+.mdl i{width:7px;height:7px;flex:none;border:1px solid var(--rule-2);display:block}
+.mdl[aria-pressed=true] i{background:var(--ember);border-color:var(--ember)}
+.mdl[aria-pressed=true] .mdl-n{color:var(--ink)}
+.mdl div{flex:1;min-width:0}
+.mdl-n{display:block;font-size:13px;font-weight:600;color:var(--ink-2);transition:color .14s}
+.mdl-id{display:block;font-family:"Martian Mono",monospace;font-size:9.5px;color:var(--ink-3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.mdl-p{font-family:"Martian Mono",monospace;font-size:11px;color:var(--ink-2);flex:none}
+
+/* readout */
+.read{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:12.5px}
+.read dt{color:var(--ink-3)}
+.read dd{margin:0;font-family:"Martian Mono",monospace;font-size:12px}
+.spend{
+  display:flex;justify-content:space-between;align-items:baseline;
+  margin-top:9px;padding-top:11px;border-top:1px solid var(--rule);
+}
+.spend span{font-size:12.5px;color:var(--ink-3)}
+.spend strong{font-family:"Martian Mono",monospace;font-weight:800;font-size:25px;letter-spacing:-.05em;color:var(--ember)}
+.warn{margin-top:9px;font-size:11.5px;line-height:1.5;color:var(--ink-3)}
+.go{
+  width:100%;margin-top:13px;background:var(--ember);border:none;color:var(--void);
+  padding:13px;font-family:"Martian Mono",monospace;font-weight:800;font-size:12.5px;
+  letter-spacing:-.02em;transition:filter .14s;
+}
+.go:hover{filter:brightness(1.12)}
+
+/* ---------------- proof sheet ---------------- */
+.sheet-bar{
+  display:flex;align-items:center;gap:14px;padding:13px 18px;
+  border-bottom:1px solid var(--rule);flex-wrap:wrap;
+}
+.sheet-bar h1{font-size:13px;font-weight:800}
+.sheet-bar .m{font-size:10.5px;color:var(--ink-3)}
+.reroll{
+  margin-left:auto;background:none;border:1px solid var(--rule-2);color:var(--ink-2);
+  padding:6px 13px;font-family:"Martian Mono",monospace;font-size:10.5px;transition:.14s;
+}
+.reroll:hover{border-color:var(--ember);color:var(--ember)}
+
+.grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(19px,1fr));
+  gap:2px;padding:18px;
+}
+.cell{
+  aspect-ratio:1;position:relative;border:none;padding:0;background:var(--pane-2);
+  transition:transform .1s,box-shadow .1s;
+}
+.cell:hover{transform:scale(1.42);z-index:5;box-shadow:0 0 0 1px var(--ember),0 6px 18px rgba(0,0,0,.7)}
+.cell[aria-pressed=true]{box-shadow:0 0 0 1.5px var(--ember);z-index:4}
+.cell b{position:absolute;inset:24% 24% 24% 24%;border-radius:50%;display:block}
+.cell u{position:absolute;top:0;left:0;right:0;height:23%;display:block}
+.cell.grail::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 0 1.5px var(--ember)}
+
+.cap{padding:0 18px 18px;font-family:"Martian Mono",monospace;font-size:10px;color:var(--ink-3)}
+
+/* inspector */
+.insp{border-top:1px solid var(--rule);display:grid;grid-template-columns:1fr 1fr}
+@media(max-width:760px){.insp{grid-template-columns:1fr}}
+.insp>div{padding:18px}
+.insp>div:first-child{border-right:1px solid var(--rule)}
+@media(max-width:760px){.insp>div:first-child{border-right:none;border-bottom:1px solid var(--rule)}}
+.edn{display:flex;align-items:baseline;gap:11px;margin-bottom:14px}
+.edn h2{font-size:24px}
+.edn code{font-family:"Martian Mono",monospace;font-size:10px;color:var(--ink-3)}
+.tr{display:flex;align-items:center;gap:11px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:13px}
+.tr:last-child{border-bottom:none}
+.tr i{width:74px;flex:none;font-family:"Martian Mono",monospace;font-size:9.5px;color:var(--ink-3);font-style:normal}
+.tr b{flex:1;font-weight:500}
+.tr u{
+  font-family:"Martian Mono",monospace;font-size:10px;text-decoration:none;color:var(--ink-3);
+  flex:none;padding:1px 5px;background:var(--pane-2);
+}
+.tr u.hot{color:var(--ember);background:var(--ember-dim)}
+.pr{
+  font-family:"Martian Mono",monospace;font-size:11.5px;line-height:2;color:var(--ink-2);
+  background:var(--pane);border:1px solid var(--rule);padding:14px;word-break:break-word;
+}
+.pr mark{background:none;color:var(--ember)}
+.pr em{font-style:normal;color:var(--ink-3)}
+.cp{
+  margin-top:11px;background:none;border:1px solid var(--rule-2);color:var(--ink-2);
+  padding:6px 13px;font-family:"Martian Mono",monospace;font-size:10.5px;transition:.14s;
+}
+.cp:hover{border-color:var(--ember);color:var(--ember)}
+
+/* ---------------- ledger ---------------- */
+.ledger{border-top:1px solid var(--rule)}
+.ledger-bar{padding:13px 18px;border-bottom:1px solid var(--rule);display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
+.ledger-bar h2{font-size:13px}
+.ledger-bar p{font-size:12px;color:var(--ink-3)}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{
+  text-align:left;font-family:"Martian Mono",monospace;font-weight:400;font-size:9.5px;
+  color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;
+  padding:9px 18px;border-bottom:1px solid var(--rule);
+}
+.tbl th.n,.tbl td.n{text-align:right;font-family:"Martian Mono",monospace;font-variant-numeric:tabular-nums}
+.tbl td{padding:7px 18px;border-bottom:1px solid var(--rule)}
+.tbl td.n{font-size:11.5px;color:var(--ink-2)}
+.tbl tr.grp td{background:var(--pane);font-family:"Martian Mono",monospace;font-size:10px;
+  color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+.tbl tr:hover td{background:var(--pane-2)}
+.tbl tr.grp:hover td{background:var(--pane)}
+.bar{position:relative;height:5px;background:var(--pane-2);min-width:52px;display:block}
+.bar i{position:absolute;inset:0 auto 0 0;background:var(--ink-3);display:block}
+.bar i.off{background:var(--ember)}
+.dev{font-family:"Martian Mono",monospace;font-size:10.5px;color:var(--ink-3)}
+.dev.off{color:var(--ember)}
+.tbl-scroll{overflow-x:auto}
+
+/* ---------------- close ---------------- */
+.close{border-top:1px solid var(--rule);padding:26px 18px 40px;display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:26px;max-width:1100px}
+.close h3{font-size:12px;margin-bottom:9px}
+.close p{font-size:13.5px;color:var(--ink-2);line-height:1.65}
+.close p+p{margin-top:9px}
+.close a{color:var(--ember)}
+.foot{border-top:1px solid var(--rule);padding:15px 18px;font-family:"Martian Mono",monospace;
+  font-size:10px;color:var(--ink-3);display:flex;gap:16px;flex-wrap:wrap}
+
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<header class="top">
+  <a class="logo" href="#"><i></i>CHIMERA</a>
+  <div class="ticker">
+    <b>RUN</b> <span id="tRun">001</span>
+    <b>EDITIONS</b> <span id="tEd">—</span>
+    <b>SPACE</b> <span id="tSpace">—</span>
+    <b>DUPES</b> <span id="tDupe">0</span>
+    <b>GRAILS</b> <span id="tGrail">—</span>
+    <b>MODEL</b> <span id="tModel">—</span>
+  </div>
+</header>
+
+<div class="app">
+
+  <aside class="ctrl">
+    <div class="blk">
+      <span class="lbl">Reference</span>
+      <button class="slot" id="slot">
+        <figure id="thumb">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="3" width="18" height="18"/><circle cx="8.6" cy="9" r="1.5"/><path d="M21 15.5l-4.6-4.3L5 21"/></svg>
+        </figure>
+        <div>
+          <strong id="slotName">Drop your character</strong>
+          <small id="slotSub">Sets the style for every edition</small>
+        </div>
+      </button>
+      <input type="file" id="file" accept="image/*" hidden>
+    </div>
+
+    <div class="blk">
+      <span class="lbl">Editions</span>
+      <div class="size">
+        <input type="number" id="size" value="1000" min="1" max="10000" aria-label="Number of editions">
+        <em>of 806,736</em>
+      </div>
+      <div class="steps" id="steps">
+        <button type="button" data-n="100">100</button>
+        <button type="button" data-n="500">500</button>
+        <button type="button" data-n="1000" aria-pressed="true">1K</button>
+        <button type="button" data-n="5000">5K</button>
+      </div>
+    </div>
+
+    <div class="blk">
+      <span class="lbl">Model — your key</span>
+      <div id="mdls"></div>
+    </div>
+
+    <div class="blk">
+      <dl class="read"><dt>Per image</dt><dd id="rPer">—</dd></dl>
+      <dl class="read"><dt>Wall time</dt><dd id="rTime">—</dd></dl>
+      <div class="spend"><span>Estimated spend</span><strong id="rCost">—</strong></div>
+      <p class="warn">Indicative list price — confirm on your provider's pricing page. Rejected and re-rolled images are billed too.</p>
+      <button class="go" id="go">COPY RUN CONFIG</button>
+    </div>
+  </aside>
+
+  <main>
+    <div class="sheet-bar">
+      <h1>PROOF SHEET</h1>
+      <span class="m" id="sheetSub">—</span>
+      <button class="reroll" id="reroll">RE-ROLL</button>
+    </div>
+
+    <div class="grid" id="grid"></div>
+    <p class="cap" id="cap"></p>
+
+    <div class="insp">
+      <div>
+        <div class="edn">
+          <h2 id="iEd">—</h2>
+          <code id="iDna">—</code>
+        </div>
+        <div id="iTraits"></div>
+      </div>
+      <div>
+        <span class="lbl">Prompt sent to the model</span>
+        <div class="pr" id="iPrompt"></div>
+        <button class="cp" id="iCopy">COPY PROMPT</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<section class="ledger">
+  <div class="ledger-bar">
+    <h2>RARITY LEDGER</h2>
+    <p>Target weight against what this run actually produced. Deviation over 2 points is flagged.</p>
+  </div>
+  <div class="tbl-scroll">
+    <table class="tbl">
+      <thead>
+        <tr><th>Trait</th><th class="n">Target</th><th class="n">Actual</th><th>Distribution</th><th class="n">Δ</th><th class="n">Count</th></tr>
+      </thead>
+      <tbody id="ledger"></tbody>
+    </table>
+  </div>
+</section>
+
+<div class="close">
+  <div>
+    <h3>WHY TRAITS COME FIRST</h3>
+    <p>Ask a model for “a cat wearing something” a thousand times and you get a thousand images nobody can filter, price or rank. Chimera draws the traits first, against real weights, then writes the prompt from them.</p>
+    <p>Your metadata therefore describes what you <em>asked for</em> — not what a captioning model guessed afterwards.</p>
+  </div>
+  <div>
+    <h3>WHAT IT WON'T DO</h3>
+    <p>It won't hold your style perfectly. Some editions come back off-model and need re-rolling — and a re-roll is a second charge.</p>
+    <p>It won't guarantee the picture matches the label. The model can quietly skip a hat you asked for. Metadata matches the request, not the pixels. Review before you mint.</p>
+  </div>
+  <div>
+    <h3>BEFORE YOU SPEND</h3>
+    <p>Layer compositing is free and instant. Every render here is a paid API call and a thousand of them is a three-figure bill that takes hours, not seconds.</p>
+    <p>Runs resume where they stopped, so a crash never re-bills you for images already on disk.</p>
+  </div>
+</div>
+
+<footer class="foot">
+  <span>CHIMERA</span>
+  <span>MIT</span>
+  <span>RARITY + METADATA ENGINE FROM HASHLIPS ART ENGINE</span>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  var TRAITS=[
+    {k:"Background",o:[["Sky Blue",25,"#7FB2E5"],["Butter",20,"#F2D06B"],["Mint",18,"#8FD9B6"],["Rose",15,"#EFA0B4"],["Slate",12,"#6E7681"],["Void",6,"#17161A"],["Gold Leaf",4,"#D4AF37"]]},
+    {k:"Fur",o:[["Orange Tabby",22,"#E08A3C"],["Tuxedo",20,"#2A2A2E"],["Calico",18,"#E8D5B7"],["Grey Tabby",16,"#9AA0A6"],["Snow White",14,"#F2EFEA"],["Void Black",7,"#141416"],["Siamese",3,"#D9C4A9"]]},
+    {k:"Eyes",o:[["Amber",26],["Emerald",22],["Sapphire",20],["Heterochromia",12],["Sleepy",12],["Laser",5],["Closed",3]]},
+    {k:"Headwear",o:[["None",34],["Detective Cap",14,"#8A7A5E"],["Pirate Tricorn",12,"#22212A"],["Bucket Hat",12,"#6E8E6A"],["Straw Hat",10,"#D8B96A"],["Propeller Beanie",8,"#D45B6A"],["Trader Visor",6,"#4A7FB5"],["Crown",4,"#E3B93E"]]},
+    {k:"Outfit",o:[["None",30],["Denim Jacket",16],["Hoodie",15],["Trench Coat",13],["Pinstripe Suit",12],["Turtleneck",9],["Bomber",5]]},
+    {k:"Accessory",o:[["None",40],["Bell Collar",18],["Neck Tie",14],["Monocle",10],["Paw Tag",9],["Cigar",5],["Diamond Chain",4]]},
+    {k:"Expression",o:[["Neutral",26],["Smug",22],["Wide-Eyed",18],["Grumpy",16],["Grin",12],["Unimpressed",6]]}
+  ];
+
+  var MODELS=[
+    {id:"bfl",      n:"Black Forest Labs", m:"flux-kontext-pro",                   p:0.04,  s:5},
+    {id:"gemini",   n:"Google Gemini",     m:"gemini-flash-image",                 p:0.039, s:4},
+    {id:"openai",   n:"OpenAI",            m:"gpt-image-1",                        p:0.04,  s:12},
+    {id:"fal",      n:"fal.ai",            m:"fal-ai/flux-pro/kontext",            p:0.04,  s:4},
+    {id:"replicate",n:"Replicate",         m:"black-forest-labs/flux-kontext-pro", p:0.04,  s:8}
+  ];
+  var model=MODELS[0];
+
+  var MAX_CELLS=1200;                 /* the sheet renders at most this many, and says so */
+  var SPACE=TRAITS.reduce(function(a,t){return a*t.o.length},1);
+  var fmt=function(n){return n.toLocaleString("en-US")};
+  var run=[], sel=0, runNo=1;
+
+  var $=function(id){return document.getElementById(id)};
+  var sizeEl=$("size");
+
+  /* totals per trait, computed once */
+  TRAITS.forEach(function(t){
+    t.total=t.o.reduce(function(a,x){return a+x[1]},0);
+  });
+
+  function draw(t){
+    var r=Math.floor(Math.random()*t.total);
+    for(var i=0;i<t.o.length;i++){ r-=t.o[i][1]; if(r<0) return i; }
+    return t.o.length-1;
+  }
+
+  /* deterministic short hash of the trait indices — stands in for the sha1 the engine writes */
+  function dna(idx){
+    var h=2166136261,i;
+    for(i=0;i<idx.length;i++){ h^=(idx[i]+1)*(i+7); h=Math.imul(h,16777619)>>>0 }
+    return ("00000000"+h.toString(16)).slice(-8);
+  }
+
+  function roll(n){
+    var seen={}, out=[], guard=0;
+    while(out.length<n && guard<n*40){
+      guard++;
+      var idx=TRAITS.map(draw), key=idx.join("-");
+      if(seen[key]) continue;
+      seen[key]=1;
+      out.push({idx:idx,h:dna(idx)});
+    }
+    return out;
+  }
+
+  function opt(ti,oi){ return TRAITS[ti].o[oi] }
+  function pct(ti,oi){ return opt(ti,oi)[1]/TRAITS[ti].total*100 }
+  function val(e,name){
+    for(var i=0;i<TRAITS.length;i++) if(TRAITS[i].k===name) return opt(i,e.idx[i])[0];
+    return "";
+  }
+  function rarest(e){
+    var lo=100;
+    for(var i=0;i<TRAITS.length;i++) lo=Math.min(lo,pct(i,e.idx[i]));
+    return lo;
+  }
+
+  /* ---------- proof sheet ---------- */
+  function paintSheet(){
+    var shown=Math.min(run.length,MAX_CELLS), html="", i;
+    for(i=0;i<shown;i++){
+      var e=run[i];
+      var bg=opt(0,e.idx[0])[2];
+      var fur=opt(1,e.idx[1])[2];
+      var hat=opt(3,e.idx[3])[2];
+      html+='<button class="cell'+(rarest(e)<5?" grail":"")+'" data-i="'+i+'" type="button" '+
+            'aria-pressed="'+(i===sel)+'" title="#'+(i+1)+'" style="background:'+bg+'">'+
+            (hat?'<u style="background:'+hat+'"></u>':'')+
+            '<b style="background:'+fur+'"></b></button>';
+    }
+    $("grid").innerHTML=html;
+    $("cap").textContent = run.length>shown
+      ? "Showing "+fmt(shown)+" of "+fmt(run.length)+" editions — the sheet caps at "+fmt(MAX_CELLS)+" cells. The ledger below counts all "+fmt(run.length)+"."
+      : "All "+fmt(run.length)+" editions. Ember outline marks a grail — a trait held by under 5% of the collection.";
+  }
+
+  function paintInspector(){
+    var e=run[sel]; if(!e) return;
+    $("iEd").textContent="#"+String(sel+1).padStart(4,"0");
+    $("iDna").textContent="sha1 "+e.h+"…";
+    $("iTraits").innerHTML=TRAITS.map(function(t,i){
+      var p=pct(i,e.idx[i]);
+      return '<div class="tr"><i>'+t.k+'</i><b>'+opt(i,e.idx[i])[0]+'</b>'+
+             '<u class="'+(p<8?"hot":"")+'">'+p.toFixed(1)+'%</u></div>';
+    }).join("");
+
+    var worn=[];
+    if(val(e,"Headwear")!=="None")  worn.push("a <mark>"+val(e,"Headwear").toLowerCase()+"</mark>");
+    if(val(e,"Outfit")!=="None")    worn.push("a <mark>"+val(e,"Outfit").toLowerCase()+"</mark>");
+    if(val(e,"Accessory")!=="None") worn.push("a <mark>"+val(e,"Accessory").toLowerCase()+"</mark>");
+    $("iPrompt").innerHTML=
+      "<mark>"+val(e,"Fur").toLowerCase()+"</mark> cat, <mark>"+val(e,"Expression").toLowerCase()+
+      "</mark> expression, <mark>"+val(e,"Eyes").toLowerCase()+"</mark> eyes, "+
+      (worn.length?"wearing "+worn.join(" and ")+", ":"no headwear or clothing, ")+
+      "<mark>"+val(e,"Background").toLowerCase()+"</mark> background, "+
+      "<em>flat vector PFP illustration, bold clean linework, centred bust portrait, matching the reference image style exactly</em>";
+  }
+
+  /* ---------- ledger ---------- */
+  function paintLedger(){
+    var rows="";
+    TRAITS.forEach(function(t,ti){
+      rows+='<tr class="grp"><td colspan="6">'+t.k+'</td></tr>';
+      t.o.forEach(function(o,oi){
+        var count=0;
+        for(var i=0;i<run.length;i++) if(run[i].idx[ti]===oi) count++;
+        var target=o[1]/t.total*100;
+        var actual=run.length?count/run.length*100:0;
+        var d=actual-target, off=Math.abs(d)>2;
+        rows+='<tr><td>'+o[0]+'</td>'+
+          '<td class="n">'+target.toFixed(1)+'</td>'+
+          '<td class="n">'+actual.toFixed(1)+'</td>'+
+          '<td><span class="bar"><i class="'+(off?"off":"")+'" style="width:'+Math.min(100,actual/40*100).toFixed(1)+'%"></i></span></td>'+
+          '<td class="n"><span class="dev '+(off?"off":"")+'">'+(d>=0?"+":"")+d.toFixed(1)+'</span></td>'+
+          '<td class="n">'+fmt(count)+'</td></tr>';
+      });
+    });
+    $("ledger").innerHTML=rows;
+  }
+
+  /* ---------- readouts ---------- */
+  function human(s){
+    if(s<90) return Math.round(s)+"s";
+    if(s<5400) return Math.round(s/60)+"m";
+    var h=s/3600;
+    return (h<10?h.toFixed(1):Math.round(h))+"h";
+  }
+  function paintReadout(){
+    var n=run.length, grails=0;
+    for(var i=0;i<run.length;i++) if(rarest(run[i])<5) grails++;
+    $("rPer").textContent="$"+model.p.toFixed(3);
+    $("rTime").textContent="~"+human(n*model.s/4);   /* 4 in flight, deliberately conservative */
+    $("rCost").textContent="$"+(n*model.p).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    $("tEd").textContent=fmt(n);
+    $("tSpace").textContent=fmt(SPACE);
+    $("tGrail").textContent=fmt(grails);
+    $("tModel").textContent=model.m;
+    $("tRun").textContent=String(runNo).padStart(3,"0");
+    $("sheetSub").textContent=fmt(n)+" EDITIONS · "+fmt(grails)+" GRAILS · 0 DUPES";
+  }
+
+  /* ---------- models ---------- */
+  $("mdls").innerHTML=MODELS.map(function(m){
+    return '<button class="mdl" type="button" data-id="'+m.id+'" aria-pressed="'+(m.id===model.id)+'">'+
+      '<i></i><div><span class="mdl-n">'+m.n+'</span><span class="mdl-id">'+m.m+'</span></div>'+
+      '<span class="mdl-p">$'+m.p.toFixed(3)+'</span></button>';
+  }).join("");
+
+  $("mdls").addEventListener("click",function(e){
+    var b=e.target.closest(".mdl"); if(!b) return;
+    model=MODELS.filter(function(m){return m.id===b.dataset.id})[0];
+    [].forEach.call(this.querySelectorAll(".mdl"),function(x){x.setAttribute("aria-pressed",String(x===b))});
+    paintReadout();
+  });
+
+  /* ---------- size ---------- */
+  function syncSteps(){
+    [].forEach.call($("steps").querySelectorAll("button"),function(b){
+      b.setAttribute("aria-pressed",String(Number(b.dataset.n)===Number(sizeEl.value)));
+    });
+  }
+  function regenerate(bump){
+    var n=Math.max(1,Math.min(10000,Number(sizeEl.value)||1));
+    if(bump) runNo++;
+    run=roll(n); sel=0;
+    paintSheet(); paintInspector(); paintLedger(); paintReadout();
+  }
+  $("steps").addEventListener("click",function(e){
+    var b=e.target.closest("button"); if(!b) return;
+    sizeEl.value=b.dataset.n; syncSteps(); regenerate(true);
+  });
+  var t=null;
+  sizeEl.addEventListener("input",function(){
+    syncSteps(); clearTimeout(t); t=setTimeout(function(){regenerate(true)},220);
+  });
+  $("reroll").addEventListener("click",function(){ regenerate(true) });
+
+  $("grid").addEventListener("click",function(e){
+    var c=e.target.closest(".cell"); if(!c) return;
+    var prev=this.querySelector('.cell[aria-pressed="true"]');
+    if(prev) prev.setAttribute("aria-pressed","false");
+    c.setAttribute("aria-pressed","true");
+    sel=Number(c.dataset.i); paintInspector();
+  });
+
+  /* ---------- copy ---------- */
+  function copy(txt,btn,label){
+    navigator.clipboard.writeText(txt).then(function(){
+      btn.textContent="COPIED"; setTimeout(function(){btn.textContent=label},1300);
+    }).catch(function(){
+      btn.textContent="PRESS ⌘C"; setTimeout(function(){btn.textContent=label},1300);
+    });
+  }
+  $("iCopy").addEventListener("click",function(){
+    copy($("iPrompt").textContent,this,"COPY PROMPT");
+  });
+  $("go").addEventListener("click",function(){
+    var cfg='module.exports = {\n'+
+      '  reference: "./reference.png",\n'+
+      '  editionSize: '+run.length+',\n'+
+      '  provider: "'+model.id+'",\n'+
+      '  model: "'+model.m+'",\n'+
+      '  apiKey: process.env.CHIMERA_API_KEY,\n'+
+      '  concurrency: 4,\n'+
+      '  traits: require("./traits.js"),\n'+
+      '  confirmSpendBefore: true\n};';
+    copy(cfg,this,"COPY RUN CONFIG");
+  });
+
+  /* ---------- reference ---------- */
+  var slot=$("slot"), file=$("file"), thumb=$("thumb");
+  slot.addEventListener("click",function(){file.click()});
+  file.addEventListener("change",function(){ if(this.files&&this.files[0]) show(this.files[0]) });
+  ["dragenter","dragover"].forEach(function(ev){
+    slot.addEventListener(ev,function(e){e.preventDefault();slot.classList.add("over")});
+  });
+  ["dragleave","drop"].forEach(function(ev){
+    slot.addEventListener(ev,function(e){e.preventDefault();slot.classList.remove("over")});
+  });
+  slot.addEventListener("drop",function(e){
+    var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(f&&/^image\//.test(f.type)) show(f);
+  });
+  function show(f){
+    var r=new FileReader();
+    r.onload=function(){
+      thumb.innerHTML='<img alt="Reference character">';
+      thumb.querySelector("img").src=r.result;
+      $("slotName").textContent=f.name;
+      $("slotSub").textContent="Style locked";
+    };
+    r.readAsDataURL(f);
+  }
+
+  syncSteps(); regenerate(false);
+})();
+</script>
