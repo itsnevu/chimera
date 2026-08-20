@@ -103,7 +103,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 
 /* model rows */
 .mdl{
-  display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;
+  display:flex;align-items:flex-start;gap:11px;width:100%;text-align:left;background:none;
   border:none;border-bottom:1px solid var(--rule);padding:10px 0;transition:.14s;
 }
 .mdl:last-of-type{border-bottom:none}
@@ -115,6 +115,9 @@ button{font:inherit;color:inherit;cursor:pointer}
 .mdl-n{display:block;font-size:13px;font-weight:600;color:var(--ink-2);transition:color .14s}
 .mdl-id{display:block;font-family:"Martian Mono",monospace;font-size:9.5px;color:var(--ink-3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.mdl-n s{text-decoration:none;font-family:"Martian Mono",monospace;font-size:8px;
+  letter-spacing:.06em;color:var(--ember);background:var(--ember-dim);padding:1px 4px;margin-left:5px;vertical-align:1px}
+.mdl-b{display:block;font-size:10.5px;color:var(--ink-3);line-height:1.4;margin-top:3px}
 .mdl-p{font-family:"Martian Mono",monospace;font-size:11px;color:var(--ink-2);flex:none}
 
 /* readout */
@@ -276,15 +279,16 @@ button{font:inherit;color:inherit;cursor:pointer}
     </div>
 
     <div class="blk">
-      <span class="lbl">Model — your key</span>
+      <span class="lbl">Model — one OpenRouter key</span>
       <div id="mdls"></div>
     </div>
 
     <div class="blk">
       <dl class="read"><dt>Per image</dt><dd id="rPer">—</dd></dl>
       <dl class="read"><dt>Wall time</dt><dd id="rTime">—</dd></dl>
-      <div class="spend"><span>Estimated spend</span><strong id="rCost">—</strong></div>
-      <p class="warn">Indicative list price — confirm on your provider's pricing page. Rejected and re-rolled images are billed too.</p>
+      <dl class="read"><dt>Reroll allowance</dt><dd id="rRe">—</dd></dl>
+      <div class="spend"><span>Plan for</span><strong id="rCost">—</strong></div>
+      <p class="warn">Verified list prices, 2026-08-21, for a 1024&times;1024 render carrying one reference image. Token-billed models are approximate. Re-rolls are charged again — the planning number allows 15% for them.</p>
       <button class="go" id="go">COPY RUN CONFIG</button>
     </div>
   </aside>
@@ -369,12 +373,16 @@ button{font:inherit;color:inherit;cursor:pointer}
     {k:"Expression",o:[["Neutral",26],["Smug",22],["Wide-Eyed",18],["Grumpy",16],["Grin",12],["Unimpressed",6]]}
   ];
 
+  /* All routed through OpenRouter's Images API — one key, every model.
+     Prices verified against live OpenRouter/OpenAI/Google pricing 2026-08-21,
+     for a 1024x1024 render carrying one 1024x1024 reference image. */
   var MODELS=[
-    {id:"bfl",      n:"Black Forest Labs", m:"flux-kontext-pro",                   p:0.04,  s:5},
-    {id:"gemini",   n:"Google Gemini",     m:"gemini-flash-image",                 p:0.039, s:4},
-    {id:"openai",   n:"OpenAI",            m:"gpt-image-1",                        p:0.04,  s:12},
-    {id:"fal",      n:"fal.ai",            m:"fal-ai/flux-pro/kontext",            p:0.04,  s:4},
-    {id:"replicate",n:"Replicate",         m:"black-forest-labs/flux-kontext-pro", p:0.04,  s:8}
+    {id:"seedream-4.5",n:"Seedream 4.5",     m:"bytedance-seed/seedream-4.5",       p:0.040,s:5, t:"PICK",   b:"flat per image, 14 refs, no reference surcharge"},
+    {id:"klein",       n:"FLUX.2 klein 4B",  m:"black-forest-labs/flux.2-klein-4b", p:0.014,s:4, t:"BUDGET", b:"output-billed only, 4 refs, no consistency claim"},
+    {id:"gpt-mini",    n:"GPT Image 1 mini", m:"openai/gpt-image-1-mini",           p:0.012,s:8, t:"",       b:"token-billed, so this figure is approximate"},
+    {id:"flux-pro",    n:"FLUX.2 pro",       m:"black-forest-labs/flux.2-pro",      p:0.045,s:6, t:"QUALITY",b:"$0.030 output + $0.015 per MP of reference"},
+    {id:"gemini",      n:"Gemini 3.1 Flash", m:"google/gemini-3.1-flash-image",     p:0.067,s:4, t:"",       b:"token-billed, SynthID watermark on every output"},
+    {id:"flux-max",    n:"FLUX.2 max",       m:"black-forest-labs/flux.2-max",      p:0.100,s:7, t:"",       b:"$0.070 output + $0.030 per MP of reference"}
   ];
   var model=MODELS[0];
 
@@ -503,7 +511,9 @@ button{font:inherit;color:inherit;cursor:pointer}
     for(var i=0;i<run.length;i++) if(rarest(run[i])<5) grails++;
     $("rPer").textContent="$"+model.p.toFixed(3);
     $("rTime").textContent="~"+human(n*model.s/4);   /* 4 in flight, deliberately conservative */
-    $("rCost").textContent="$"+(n*model.p).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    var raw=n*model.p;
+    $("rRe").textContent="+15% · $"+(raw*0.15).toFixed(2);
+    $("rCost").textContent="$"+(raw*1.15).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
     $("tEd").textContent=fmt(n);
     $("tSpace").textContent=fmt(SPACE);
     $("tGrail").textContent=fmt(grails);
@@ -515,7 +525,8 @@ button{font:inherit;color:inherit;cursor:pointer}
   /* ---------- models ---------- */
   $("mdls").innerHTML=MODELS.map(function(m){
     return '<button class="mdl" type="button" data-id="'+m.id+'" aria-pressed="'+(m.id===model.id)+'">'+
-      '<i></i><div><span class="mdl-n">'+m.n+'</span><span class="mdl-id">'+m.m+'</span></div>'+
+      '<i></i><div><span class="mdl-n">'+m.n+(m.t?' <s>'+m.t+'</s>':'')+'</span>'+
+      '<span class="mdl-id">'+m.m+'</span><span class="mdl-b">'+m.b+'</span></div>'+
       '<span class="mdl-p">$'+m.p.toFixed(3)+'</span></button>';
   }).join("");
 
@@ -571,9 +582,9 @@ button{font:inherit;color:inherit;cursor:pointer}
     var cfg='module.exports = {\n'+
       '  reference: "./reference.png",\n'+
       '  editionSize: '+run.length+',\n'+
-      '  provider: "'+model.id+'",\n'+
+      '  provider: "openrouter",\n'+
       '  model: "'+model.m+'",\n'+
-      '  apiKey: process.env.CHIMERA_API_KEY,\n'+
+      '  apiKey: process.env.OPENROUTER_API_KEY,\n'+
       '  concurrency: 4,\n'+
       '  traits: require("./traits.js"),\n'+
       '  confirmSpendBefore: true\n};';

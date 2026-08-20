@@ -125,6 +125,23 @@ AI mode, planned:
 
 The point of that ordering: a diffusion model produces no discrete traits on its own. Rolling first is what keeps rarity computable and metadata truthful.
 
+### Models
+
+One **OpenRouter** key reaches every model below via `POST /api/v1/images`, whose `input_references` field carries the reference image. Prices verified 2026-08-21 for a 1024x1024 render with one 1024x1024 reference.
+
+| Model | Per image | 1000 (+15% rerolls) | Refs | Billing |
+|---|---|---|---|---|
+| `bytedance-seed/seedream-4.5` **default** | $0.040 | $46 | 14 | flat, no reference surcharge |
+| `black-forest-labs/flux.2-klein-4b` | $0.014 | $16 | 4 | output only; no consistency claim |
+| `openai/gpt-image-1-mini` | ~$0.012 | ~$14 | 16 | token-billed, approximate |
+| `black-forest-labs/flux.2-pro` | $0.045 | $52 | 8 | $0.030 output + $0.015/MP input |
+| `google/gemini-3.1-flash-image` | $0.067 | $77 | 14 | token-billed; SynthID watermark |
+| `black-forest-labs/flux.2-max` | $0.100 | $115 | 8 | $0.070 output + $0.030/MP input |
+
+Seedream 4.5 is the default because it bills flat per image with **no surcharge for reference images** even at 14 of them — which matters when every call in the run carries one.
+
+**Stable Diffusion / SDXL are not on OpenRouter** (0 matches across its 417-model catalog). Those need Replicate or fal.ai, which is also the only route to a custom character LoRA.
+
 Known costs of that approach, which will be documented rather than hidden: every render is a paid API call, style drifts across a long run, and the model can silently omit a trait you asked for — so metadata matches the *request*, not the pixels.
 
 ---
