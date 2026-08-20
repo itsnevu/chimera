@@ -26,46 +26,48 @@ const canvas = createCanvas(format.width, format.height);
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = format.smoothing;
 var metadataList = [];
-var attributesList = [];
 var dnaList = new Set();
-const DNA_DELIMITER = "-";
+
+// The rarity engine and metadata builder now live in src/core/ so AI mode can
+// reuse them. Layer mode behaviour is unchanged.
+const {
+  DNA_DELIMITER,
+  getRarityWeight,
+  cleanName,
+  filterDNAOptions,
+  isDnaUnique,
+  createDna,
+  constructLayerToDna,
+  shuffle,
+} = require(`${basePath}/src/core/dna.js`);
+const {
+  buildMetadata,
+  collectAttributes,
+} = require(`${basePath}/src/core/metadata.js`);
 const ChimeraGiffer = require(`${basePath}/modules/ChimeraGiffer.js`);
 
 let chimeraGiffer = null;
 
 const buildSetup = () => {
+  // A ledger means an AI run has spent real money into this directory.
+  // Wiping it would destroy paid-for images, so refuse unless forced.
+  const ledger = `${buildDir}/ai/ledger.jsonl`;
+  if (fs.existsSync(ledger) && !process.argv.includes("--force")) {
+    console.error(
+      `Refusing to clear ${buildDir}: an AI run ledger exists at ${ledger}.\n` +
+        `Those images were paid for. Move them, or pass --force to wipe anyway.`
+    );
+    process.exit(1);
+  }
   if (fs.existsSync(buildDir)) {
     fs.rmSync(buildDir, { recursive: true });
   }
-  fs.mkdirSync(buildDir);
-  fs.mkdirSync(`${buildDir}/json`);
-  fs.mkdirSync(`${buildDir}/images`);
+  fs.mkdirSync(buildDir, { recursive: true });
+  fs.mkdirSync(`${buildDir}/json`, { recursive: true });
+  fs.mkdirSync(`${buildDir}/images`, { recursive: true });
   if (gif.export) {
-    fs.mkdirSync(`${buildDir}/gifs`);
+    fs.mkdirSync(`${buildDir}/gifs`, { recursive: true });
   }
-};
-
-const getRarityWeight = (_str) => {
-  let nameWithoutExtension = _str.slice(0, -4);
-  var nameWithoutWeight = Number(
-    nameWithoutExtension.split(rarityDelimiter).pop()
-  );
-  if (isNaN(nameWithoutWeight)) {
-    nameWithoutWeight = 1;
-  }
-  return nameWithoutWeight;
-};
-
-const cleanDna = (_str) => {
-  const withoutOptions = removeQueryStrings(_str);
-  var dna = Number(withoutOptions.split(":").shift());
-  return dna;
-};
-
-const cleanName = (_str) => {
-  let nameWithoutExtension = _str.slice(0, -4);
-  var nameWithoutWeight = nameWithoutExtension.split(rarityDelimiter).shift();
-  return nameWithoutWeight;
 };
 
 const getElements = (path) => {
@@ -128,57 +130,6 @@ const drawBackground = () => {
   ctx.fillRect(0, 0, format.width, format.height);
 };
 
-const addMetadata = (_dna, _edition) => {
-  let dateTime = Date.now();
-  let tempMetadata = {
-    name: `${namePrefix} #${_edition}`,
-    description: description,
-    image: `${baseUri}/${_edition}.png`,
-    dna: sha1(_dna),
-    edition: _edition,
-    date: dateTime,
-    ...extraMetadata,
-    attributes: attributesList,
-    compiler: "Chimera",
-  };
-  if (network == NETWORK.sol) {
-    tempMetadata = {
-      //Added metadata for solana
-      name: tempMetadata.name,
-      symbol: solanaMetadata.symbol,
-      description: tempMetadata.description,
-      //Added metadata for solana
-      seller_fee_basis_points: solanaMetadata.seller_fee_basis_points,
-      image: `${_edition}.png`,
-      //Added metadata for solana
-      external_url: solanaMetadata.external_url,
-      edition: _edition,
-      ...extraMetadata,
-      attributes: tempMetadata.attributes,
-      properties: {
-        files: [
-          {
-            uri: `${_edition}.png`,
-            type: "image/png",
-          },
-        ],
-        category: "image",
-        creators: solanaMetadata.creators,
-      },
-    };
-  }
-  metadataList.push(tempMetadata);
-  attributesList = [];
-};
-
-const addAttributes = (_element) => {
-  let selectedElement = _element.layer.selectedElement;
-  attributesList.push({
-    trait_type: _element.layer.name,
-    value: selectedElement.name,
-  });
-};
-
 const loadLayerImg = async (_layer) => {
   try {
     return new Promise(async (resolve) => {
@@ -215,100 +166,14 @@ const drawElement = (_renderObject, _index, _layersLen) => {
         format.width,
         format.height
       );
-
-  addAttributes(_renderObject);
-};
-
-const constructLayerToDna = (_dna = "", _layers = []) => {
-  let mappedDnaToLayers = _layers.map((layer, index) => {
-    let selectedElement = layer.elements.find(
-      (e) => e.id == cleanDna(_dna.split(DNA_DELIMITER)[index])
-    );
-    return {
-      name: layer.name,
-      blend: layer.blend,
-      opacity: layer.opacity,
-      selectedElement: selectedElement,
-    };
-  });
-  return mappedDnaToLayers;
-};
-
-/**
- * In some cases a DNA string may contain optional query parameters for options
- * such as bypassing the DNA isUnique check, this function filters out those
- * items without modifying the stored DNA.
- *
- * @param {String} _dna New DNA string
- * @returns new DNA string with any items that should be filtered, removed.
- */
-const filterDNAOptions = (_dna) => {
-  const dnaItems = _dna.split(DNA_DELIMITER);
-  const filteredDNA = dnaItems.filter((element) => {
-    const query = /(\?.*$)/;
-    const querystring = query.exec(element);
-    if (!querystring) {
-      return true;
-    }
-    const options = querystring[1].split("&").reduce((r, setting) => {
-      const keyPairs = setting.split("=");
-      return { ...r, [keyPairs[0]]: keyPairs[1] };
-    }, []);
-
-    return options.bypassDNA;
-  });
-
-  return filteredDNA.join(DNA_DELIMITER);
-};
-
-/**
- * Cleaning function for DNA strings. When DNA strings include an option, it
- * is added to the filename with a ?setting=value query string. It needs to be
- * removed to properly access the file name before Drawing.
- *
- * @param {String} _dna The entire newDNA string
- * @returns Cleaned DNA string without querystring parameters.
- */
-const removeQueryStrings = (_dna) => {
-  const query = /(\?.*$)/;
-  return _dna.replace(query, "");
-};
-
-const isDnaUnique = (_DnaList = new Set(), _dna = "") => {
-  const _filteredDNA = filterDNAOptions(_dna);
-  return !_DnaList.has(_filteredDNA);
-};
-
-const createDna = (_layers) => {
-  let randNum = [];
-  _layers.forEach((layer) => {
-    var totalWeight = 0;
-    layer.elements.forEach((element) => {
-      totalWeight += element.weight;
-    });
-    // number between 0 - totalWeight
-    let random = Math.floor(Math.random() * totalWeight);
-    for (var i = 0; i < layer.elements.length; i++) {
-      // subtract the current weight from the random weight until we reach a sub zero value.
-      random -= layer.elements[i].weight;
-      if (random < 0) {
-        return randNum.push(
-          `${layer.elements[i].id}:${layer.elements[i].filename}${
-            layer.bypassDNA ? "?bypassDNA=true" : ""
-          }`
-        );
-      }
-    }
-  });
-  return randNum.join(DNA_DELIMITER);
 };
 
 const writeMetaData = (_data) => {
   fs.writeFileSync(`${buildDir}/json/_metadata.json`, _data);
 };
 
-const saveMetaDataSingleFile = (_editionCount) => {
-  let metadata = metadataList.find((meta) => meta.edition == _editionCount);
+const saveMetaDataSingleFile = (metadata) => {
+  const _editionCount = metadata.edition;
   debugLogs
     ? console.log(
         `Writing metadata for ${_editionCount}: ${JSON.stringify(metadata)}`
@@ -319,20 +184,6 @@ const saveMetaDataSingleFile = (_editionCount) => {
     JSON.stringify(metadata, null, 2)
   );
 };
-
-function shuffle(array) {
-  let currentIndex = array.length,
-    randomIndex;
-  while (currentIndex != 0) {
-    randomIndex = Math.floor(Math.random() * currentIndex);
-    currentIndex--;
-    [array[currentIndex], array[randomIndex]] = [
-      array[randomIndex],
-      array[currentIndex],
-    ];
-  }
-  return array;
-}
 
 const startCreating = async () => {
   let layerConfigIndex = 0;
@@ -402,8 +253,21 @@ const startCreating = async () => {
             ? console.log("Editions left to create: ", abstractedIndexes)
             : null;
           saveImage(abstractedIndexes[0]);
-          addMetadata(newDna, abstractedIndexes[0]);
-          saveMetaDataSingleFile(abstractedIndexes[0]);
+          const metadata = buildMetadata({
+            dna: newDna,
+            edition: abstractedIndexes[0],
+            attributes: collectAttributes(renderObjectArray),
+            cfg: {
+              namePrefix,
+              description,
+              baseUri,
+              network,
+              solanaMetadata,
+              extraMetadata,
+            },
+          });
+          metadataList.push(metadata);
+          saveMetaDataSingleFile(metadata);
           console.log(
             `Created edition: ${abstractedIndexes[0]}, with DNA: ${sha1(
               newDna
