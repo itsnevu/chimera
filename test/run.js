@@ -15,9 +15,32 @@ const { buildMetadata, collectAttributes } = require(`${basePath}/src/core/metad
 const { buildLayers, validate, slugify } = require(`${basePath}/src/core/traitLayers.js`);
 const { check, decode } = require(`${basePath}/src/core/constraints.js`);
 const { assess, totalCombinations } = require(`${basePath}/src/core/traitSpace.js`);
-const { promptFor, seedFrom } = require(`${basePath}/src/prompt/promptBuilder.js`);
+const { promptFor, seedFrom, seedFor, unreachableTraits } = require(`${basePath}/src/prompt/promptBuilder.js`);
 const models = require(`${basePath}/src/providers/models.js`);
 const traitConfig = require(`${basePath}/chimera.traits.js`);
+
+const os = require("os");
+const fs = require("fs");
+const pathMod = require("path");
+const { createCanvas } = require(`${basePath}/node_modules/canvas`);
+const { Ledger, writeAtomic } = require(`${basePath}/src/pipeline/jobState.js`);
+const { pool, TokenBucket } = require(`${basePath}/src/pipeline/queue.js`);
+const phash = require(`${basePath}/src/pipeline/phash.js`);
+const openrouter = require(`${basePath}/src/providers/openrouter.js`);
+const { parseVerdict } = require(`${basePath}/src/providers/vision.js`);
+const { ProviderError, withRetry, redact } = require(`${basePath}/src/providers/base.js`);
+
+const tmpdir = () => fs.mkdtempSync(pathMod.join(os.tmpdir(), "chimera-test-"));
+
+/** A small PNG with a known colour and optional shape, for hashing tests. */
+const swatch = (hex, shape) => {
+  const c = createCanvas(64, 64);
+  const x = c.getContext("2d");
+  x.fillStyle = hex; x.fillRect(0, 0, 64, 64);
+  if (shape === "circle") { x.fillStyle = "#000"; x.beginPath(); x.arc(32, 32, 18, 0, 7); x.fill(); }
+  if (shape === "bar")    { x.fillStyle = "#000"; x.fillRect(0, 24, 64, 16); }
+  return c.toBuffer("image/png");
+};
 
 let passed = 0, failed = 0;
 const results = [];
@@ -296,264 +319,109 @@ test("prompt carries every non-composited trait", () => {
   return "all traits + frozen style anchor present";
 });
 
-test("composited traits are kept out of the prompt", () => {
-  const built = promptFor(createDna(layers), layers, traitConfig);
-  assert.ok(built.prompt.includes("transparent background"),
-    "background should be requested transparent for local compositing");
-  return "background asked transparent, composited locally";
-});
-
-
-// ────────────────────────────────────────────── ledger, queue, adapters ────
-
-const os = require("os");
-const fs = require("fs");
-const pathMod = require("path");
-const { Ledger, writeAtomic } = require(`${basePath}/src/pipeline/jobState.js`);
-const { pool, TokenBucket } = require(`${basePath}/src/pipeline/queue.js`);
-const openrouter = require(`${basePath}/src/providers/openrouter.js`);
-const { ProviderError, withRetry, redact } = require(`${basePath}/src/providers/base.js`);
-
-const tmpdir = () => fs.mkdtempSync(pathMod.join(os.tmpdir(), "chimera-test-"));
-
-test("ledger round-trips completed work and spend", () => {
-  const dir = tmpdir();
-  const l = new Ledger(`${dir}/ledger.jsonl`).open();
-  l.append({ edition: 1, costUSD: 0.04 });
-  l.append({ edition: 2, costUSD: 0.04 });
-  l.close();
-  const { done, spentUSD } = new Ledger(`${dir}/ledger.jsonl`).read();
-  assert.strictEqual(done.size, 2);
-  assert.ok(Math.abs(spentUSD - 0.08) < 1e-9, `spend was ${spentUSD}`);
-  return "2 editions, $0.08 tallied";
-});
-
-test("ledger survives a truncated final line", () => {
-  const dir = tmpdir();
-  const f = `${dir}/ledger.jsonl`;
-  fs.writeFileSync(f, JSON.stringify({ edition: 1, costUSD: 0.04 }) + "\n" + '{"edition":2,"cost');
-  const { done, spentUSD, torn } = new Ledger(f).read();
-  assert.strictEqual(done.size, 1, "good line should survive");
-  assert.strictEqual(torn, 1, "torn line should be counted");
-  assert.ok(Math.abs(spentUSD - 0.04) < 1e-9);
-  return "kill -9 costs one image, not the run";
-});
-
-test("resume skips exactly what the ledger holds", () => {
-  const dir = tmpdir();
-  const l = new Ledger(`${dir}/ledger.jsonl`).open();
-  [1, 2, 5].forEach((e) => l.append({ edition: e, costUSD: 0 }));
-  l.close();
-  const { done } = new Ledger(`${dir}/ledger.jsonl`).read();
-  const plan = [1, 2, 3, 4, 5, 6].map((edition) => ({ edition }));
-  const queue = plan.filter((e) => !done.has(e.edition)).map((e) => e.edition);
-  assert.deepStrictEqual(queue, [3, 4, 6]);
-  return "1,2,5 done -> renders 3,4,6";
-});
-
-test("writeAtomic never leaves a partial file", () => {
-  const dir = tmpdir();
-  const f = `${dir}/nested/deep/out.json`;
-  writeAtomic(f, '{"a":1}');
-  assert.strictEqual(fs.readFileSync(f, "utf8"), '{"a":1}');
-  assert.ok(!fs.existsSync(`${f}.tmp`), "temp file left behind");
-  return "creates dirs, cleans up tmp";
-});
-
-test("pool respects the concurrency limit", async () => {
-  let inFlight = 0, peak = 0;
-  await pool(
-    Array.from({ length: 40 }, (_, i) => i),
-    async () => {
-      inFlight++; peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 4));
-      inFlight--;
-    },
-    { concurrency: 4 }
-  );
-  assert.ok(peak <= 4, `peak concurrency was ${peak}, limit 4`);
-  assert.ok(peak > 1, "pool never actually parallelised");
-  return `peak ${peak} of 4`;
-});
-
-test("pool halts when shouldStop flips", async () => {
-  let processed = 0;
-  const res = await pool(
-    Array.from({ length: 200 }, (_, i) => i),
-    async () => { processed++; },
-    { concurrency: 2, shouldStop: () => processed >= 20 }
-  );
-  assert.ok(res.stopped, "pool did not report stopping");
-  assert.ok(processed < 200, "pool ran everything despite shouldStop");
-  return `stopped after ${processed} of 200`;
-});
-
-test("token bucket throttles to its rate", async () => {
-  const b = new TokenBucket(600); // 10/sec
-  const start = Date.now();
-  for (let i = 0; i < 14; i++) await b.take();
-  const elapsed = Date.now() - start;
-  assert.ok(elapsed >= 300, `14 tokens at 10/s took only ${elapsed}ms`);
-  return `14 tokens took ${elapsed}ms`;
-});
-
-test("openrouter parses every documented image shape", () => {
-  const png = Buffer.from("fake-png-bytes");
-  const b64 = png.toString("base64");
-  const shapes = {
-    "data[].b64_json":       { data: [{ b64_json: b64 }] },
-    "images[].b64_json":     { images: [{ b64_json: b64 }] },
-    "data[].image_url.url":  { data: [{ image_url: { url: `data:image/png;base64,${b64}` } }] },
-    "images[].image_url":    { images: [{ image_url: { url: `data:image/png;base64,${b64}` } }] },
+test("prompt assembly is not tied to the sample collection's trait names", () => {
+  // The version of this suite that shipped before only ever exercised the demo
+  // config, whose seven trait names happened to match string literals inside
+  // promptBuilder. It was named for this invariant and asserted it, and it
+  // passed for exactly one configuration. Renaming a trait silently dropped it
+  // from the prompt while metadata went on claiming it.
+  const alien = {
+    styleAnchor: "isometric pixel art, 1-bit palette",
+    avoid: "blurry",
+    compositeLocally: ["Backdrop"],
+    traits: [
+      { name: "Backdrop", options: [{ value: "Void", weight: 1, hex: "#000000" }] },
+      { name: "Chassis", options: [{ value: "Brass", weight: 1, prompt: "a brass mech chassis" }] },
+      { name: "Optic",   options: [{ value: "Single", weight: 1, prompt: "a single glowing optic" }] },
+      { name: "Payload", options: [{ value: "Rail", weight: 1, prompt: "a shoulder rail cannon" }] },
+    ],
   };
-  Object.entries(shapes).forEach(([label, json]) => {
-    const got = openrouter.extractImage(json);
-    assert.ok(got && got.buffer, `${label} did not yield bytes`);
-    assert.strictEqual(got.buffer.toString(), "fake-png-bytes", `${label} decoded wrong`);
-  });
-  const httpShape = openrouter.extractImage({ data: [{ url: "https://x/y.png" }] });
-  assert.strictEqual(httpShape.url, "https://x/y.png");
-  return `${Object.keys(shapes).length} base64 shapes + http url`;
-});
+  const alienLayers = buildLayers(alien);
+  assert.deepStrictEqual(validate(alien), [], validate(alien).join("; "));
 
-test("openrouter refuses to invent an image", () => {
-  assert.strictEqual(openrouter.extractImage({ error: "nope" }), null);
-  assert.strictEqual(openrouter.extractImage({}), null);
-  return "unknown payload returns null, never a corrupt buffer";
-});
-
-test("api keys are redacted from anything loggable", () => {
-  const leak = "failed with Bearer sk-or-v1-abcdef1234567890abcdef and sk-proj-9876543210xyz";
-  const clean = redact(leak);
-  assert.ok(!clean.includes("abcdef1234567890"), "bearer token leaked");
-  assert.ok(!clean.includes("9876543210xyz"), "sk- key leaked");
-  assert.ok(clean.includes("REDACTED"));
-  return "bearer + sk- both scrubbed";
-});
-
-test("retries transient failures, never 4xx", async () => {
-  let calls = 0;
-  const out = await withRetry(async () => {
-    calls++;
-    if (calls < 3) throw new ProviderError("429 slow down", { status: 429, retryable: true });
-    return "ok";
-  }, { attempts: 4, baseMs: 1 });
-  assert.strictEqual(out, "ok");
-  assert.strictEqual(calls, 3);
-
-  let bad = 0;
-  await assert.rejects(
-    withRetry(async () => {
-      bad++;
-      throw new ProviderError("400 bad request", { status: 400, retryable: false });
-    }, { attempts: 4, baseMs: 1 })
+  const built = promptFor(createDna(alienLayers), alienLayers, alien);
+  ["a brass mech chassis", "a single glowing optic", "a shoulder rail cannon"].forEach((phrase) =>
+    assert.ok(built.prompt.includes(phrase), `prompt lost "${phrase}"`)
   );
-  assert.strictEqual(bad, 1, `a 400 was retried ${bad} times — that spends money on a known-bad request`);
-  return "429 retried 3x, 400 attempted once";
-});
-
-test("spend accounting never becomes NaN", () => {
-  // The adapter returns null when the provider reports no cost. If that
-  // reached the running total the ceiling would silently stop working.
-  const unitCost = 0.04;
-  const charge = (reported) =>
-    typeof reported === "number" && Number.isFinite(reported) ? reported : unitCost;
-  let spent = 0;
-  [null, undefined, NaN, 0.031, 0].forEach((r) => { spent += charge(r); });
-  assert.ok(Number.isFinite(spent), "spend went non-finite");
-  assert.ok(Math.abs(spent - (0.04 * 3 + 0.031 + 0)) < 1e-9, `got ${spent}`);
-  return `null/undefined/NaN fall back to catalogue price`;
-});
-
-
-// ──────────────────────────────────────────────────────────── QC (M5) ────
-
-const { createCanvas } = require(`${basePath}/node_modules/canvas`);
-const phash = require(`${basePath}/src/pipeline/phash.js`);
-const { parseVerdict } = require(`${basePath}/src/providers/vision.js`);
-
-const swatch = (hex, shape) => {
-  const c = createCanvas(64, 64);
-  const x = c.getContext("2d");
-  x.fillStyle = hex; x.fillRect(0, 0, 64, 64);
-  if (shape === "circle") { x.fillStyle = "#000"; x.beginPath(); x.arc(32, 32, 18, 0, 7); x.fill(); }
-  if (shape === "bar")    { x.fillStyle = "#000"; x.fillRect(0, 24, 64, 16); }
-  return c.toBuffer("image/png");
-};
-
-test("phash gives an identical image distance zero", async () => {
-  const img = swatch("#7FB2E5", "circle");
-  const a = await phash.hashImage(img);
-  const b = await phash.hashImage(img);
-  assert.strictEqual(phash.distance(a, b), 0);
-  return "0 bits";
-});
-
-test("phash separates images that differ only in colour", async () => {
-  // The bug this guards: dHash is brightness-based and scored a rose and a
-  // sky-blue background 0 bits apart, so every edition looked like a twin.
-  const a = await phash.hashImage(swatch("#EFA0B4", "circle"));
-  const b = await phash.hashImage(swatch("#7FB2E5", "circle"));
-  const structural = phash.distance(
-    await phash.structureHash(swatch("#EFA0B4", "circle")),
-    await phash.structureHash(swatch("#7FB2E5", "circle"))
+  assert.ok(built.prompt.includes(alien.styleAnchor), "style anchor missing");
+  // No trace of the demo collection anywhere in the output.
+  ["cat", "Fur", "Headwear", "Background"].forEach((leak) =>
+    assert.ok(!built.prompt.includes(leak), `demo literal "${leak}" leaked into an unrelated collection`)
   );
-  const combined = phash.distance(a, b);
-  assert.ok(combined > structural,
-    `colour added nothing: structure ${structural}, combined ${combined}`);
-  assert.ok(combined > 0, "two different colours hashed identically");
-  return `structure ${structural} bits -> combined ${combined} bits`;
+  return "a collection sharing no trait names with the demo renders correctly";
 });
 
-test("phash separates images that differ only in shape", async () => {
-  const a = await phash.hashImage(swatch("#CCCCCC", "circle"));
-  const b = await phash.hashImage(swatch("#CCCCCC", "bar"));
-  assert.ok(phash.distance(a, b) > 0, "different shapes hashed identically");
-  return `${phash.distance(a, b)} bits apart`;
+test("a renamed composited trait still suppresses the model's background", () => {
+  // The worse half of the same bug: this instruction used to be gated on the
+  // literal "Background". Rename it and the model paints its own background,
+  // then finalize composites the flat fill underneath — visibly broken art on
+  // every edition, not merely wrong JSON.
+  const cfg = {
+    styleAnchor: "flat vector",
+    compositeLocally: ["Backdrop"],
+    traits: [
+      { name: "Backdrop", options: [{ value: "Rose", weight: 1, hex: "#EFA0B4" }] },
+      { name: "Body", options: [{ value: "Tabby", weight: 1, prompt: "a tabby cat" }] },
+    ],
+  };
+  const l = buildLayers(cfg);
+  const built = promptFor(createDna(l), l, cfg);
+  assert.ok(built.prompt.includes("plain transparent background"),
+    "transparent-background instruction was lost when the composited trait was renamed");
+  assert.ok(!built.prompt.includes("Rose"), "a composited trait must not appear in the prompt");
+  return "instruction follows compositeLocally, not a trait name";
 });
 
-test("phash detects a flat render", async () => {
-  const flat = await phash.isFlat(swatch("#123456", null));
-  const busy = await phash.isFlat(swatch("#123456", "bar"));
-  assert.strictEqual(flat.flat, true, "solid colour not detected as flat");
-  assert.strictEqual(busy.flat, false, "an image with content called flat");
-  return `flat stdDev ${flat.stdDev.toFixed(1)} vs busy ${busy.stdDev.toFixed(1)}`;
+test("an unreachable trait is a config error, not a silent drop", () => {
+  const cfg = {
+    styleAnchor: "x",
+    compositeLocally: [],
+    // The template forgets Aura entirely.
+    promptTemplate: { subject: "Body" },
+    traits: [
+      { name: "Body", options: [{ value: "Tabby", weight: 1, prompt: "a tabby cat" }] },
+      { name: "Aura", options: [{ value: "Blue", weight: 1, prompt: "wreathed in blue flame" }] },
+    ],
+  };
+  // Forgetting a trait must cost word order, never the trait.
+  const l = buildLayers(cfg);
+  assert.ok(promptFor(createDna(l), l, cfg).prompt.includes("wreathed in blue flame"),
+    "a trait missing from the template must still reach the model");
+  assert.deepStrictEqual(unreachableTraits(cfg), []);
+
+  // But a template naming something that does not exist is a real mistake.
+  const stale = { ...cfg, promptTemplate: { subject: "Fur" } };
+  assert.match(validate(stale).join(" "), /names "Fur", which is not a trait/);
+  return "fallback keeps the trait, stale template names are reported";
 });
 
-test("findTwins clusters duplicates and leaves originals alone", async () => {
-  const entries = [
-    { id: 1, hash: await phash.hashImage(swatch("#EFA0B4", "circle")) },
-    { id: 2, hash: await phash.hashImage(swatch("#EFA0B4", "circle")) },
-    { id: 3, hash: await phash.hashImage(swatch("#17161A", "bar")) },
-  ];
-  const clusters = phash.findTwins(entries, 2);
-  assert.strictEqual(clusters.length, 1, `expected 1 cluster, got ${clusters.length}`);
-  assert.deepStrictEqual(clusters[0].sort(), [1, 2]);
-  return "1 and 2 twinned, 3 untouched";
+test("a deliberately silent trait is not reported as unreachable", () => {
+  const cfg = {
+    styleAnchor: "x",
+    compositeLocally: [],
+    traits: [
+      { name: "Body", options: [{ value: "Tabby", weight: 1, prompt: "a tabby cat" }] },
+      { name: "Serial", options: [{ value: "A1", weight: 1, prompt: null }] },
+    ],
+  };
+  assert.deepStrictEqual(unreachableTraits(cfg), [], "prompt: null is a valid way to stay out of the prompt");
+  assert.deepStrictEqual(validate(cfg), []);
+  return "prompt: null traits are metadata-only by design";
 });
 
-test("QC verdict parses fenced and bare JSON alike", () => {
-  const checkable = [["Headwear", "Crown"], ["Eyes", "Amber"]];
-  const payload = '{"traits":[{"trait":"Headwear","claimed":"Crown","present":false,"note":"bare head"},' +
-                  '{"trait":"Eyes","claimed":"Amber","present":true,"note":""}]}';
-  [payload, "```json\n" + payload + "\n```", "Sure!\n" + payload].forEach((raw) => {
-    const v = parseVerdict(raw, checkable);
-    assert.strictEqual(v.length, 2);
-    assert.strictEqual(v[0].present, false);
-    assert.strictEqual(v[1].present, true);
-  });
-  return "bare, fenced and prose-wrapped all parse";
+test("re-rendering an edition uses a different seed", () => {
+  // requeue drops a flagged edition and generate re-runs it. With a seed
+  // derived from DNA alone, a provider that honours seeds returns the very
+  // image that failed QC — paid for twice.
+  const dna = createDna(layers);
+  const first = promptFor(dna, layers, traitConfig, { attempt: 0 });
+  const second = promptFor(dna, layers, traitConfig, { attempt: 1 });
+  const third = promptFor(dna, layers, traitConfig, { attempt: 1 });
+  assert.notStrictEqual(first.seed, second.seed, "a retry reused the failing seed");
+  assert.strictEqual(second.seed, third.seed, "the same attempt must stay reproducible");
+  assert.strictEqual(first.prompt, second.prompt, "only the seed should change");
+  return `attempt 0 -> ${first.seed}, attempt 1 -> ${second.seed}`;
 });
-
-test("a trait the QC model ignored counts as unverified, not a pass", () => {
-  const checkable = [["Headwear", "Crown"], ["Outfit", "Hoodie"]];
-  const v = parseVerdict('{"traits":[{"trait":"Headwear","claimed":"Crown","present":true}]}', checkable);
-  assert.strictEqual(v.length, 2);
-  assert.strictEqual(v[1].present, null, "silence must not be read as approval");
-  assert.match(v[1].note, /not addressed/);
-  return "unmentioned trait -> present:null";
-});
-
 
 // ─────────────────────────────────────────────── style bible (lever 1) ────
 
@@ -900,6 +768,238 @@ test("both adapters prefer the provider's reported cost over the estimate", asyn
     global.fetch = restore;
   }
   return "reported cost wins; a missing one is null, not NaN";
+});
+
+
+// ──────────────────────────────── restored: infrastructure coverage ────
+
+test("QC verdict parses fenced and bare JSON alike", () => {
+  const checkable = [["Headwear", "Crown"], ["Eyes", "Amber"]];
+  const payload = '{"traits":[{"trait":"Headwear","claimed":"Crown","present":false,"note":"bare head"},' +
+                  '{"trait":"Eyes","claimed":"Amber","present":true,"note":""}]}';
+  [payload, "```json\n" + payload + "\n```", "Sure!\n" + payload].forEach((raw) => {
+    const v = parseVerdict(raw, checkable);
+    assert.strictEqual(v.length, 2);
+    assert.strictEqual(v[0].present, false);
+    assert.strictEqual(v[1].present, true);
+  });
+  return "bare, fenced and prose-wrapped all parse";
+});
+
+test("a trait the QC model ignored counts as unverified, not a pass", () => {
+  const checkable = [["Headwear", "Crown"], ["Outfit", "Hoodie"]];
+  const v = parseVerdict('{"traits":[{"trait":"Headwear","claimed":"Crown","present":true}]}', checkable);
+  assert.strictEqual(v.length, 2);
+  assert.strictEqual(v[1].present, null, "silence must not be read as approval");
+  assert.match(v[1].note, /not addressed/);
+  return "unmentioned trait -> present:null";
+});
+
+test("api keys are redacted from anything loggable", () => {
+  const leak = "failed with Bearer sk-or-v1-abcdef1234567890abcdef and sk-proj-9876543210xyz";
+  const clean = redact(leak);
+  assert.ok(!clean.includes("abcdef1234567890"), "bearer token leaked");
+  assert.ok(!clean.includes("9876543210xyz"), "sk- key leaked");
+  assert.ok(clean.includes("REDACTED"));
+  return "bearer + sk- both scrubbed";
+});
+
+test("composited traits are kept out of the prompt", () => {
+  const built = promptFor(createDna(layers), layers, traitConfig);
+  assert.ok(built.prompt.includes("transparent background"),
+    "background should be requested transparent for local compositing");
+  return "background asked transparent, composited locally";
+});
+
+test("findTwins clusters duplicates and leaves originals alone", async () => {
+  const entries = [
+    { id: 1, hash: await phash.hashImage(swatch("#EFA0B4", "circle")) },
+    { id: 2, hash: await phash.hashImage(swatch("#EFA0B4", "circle")) },
+    { id: 3, hash: await phash.hashImage(swatch("#17161A", "bar")) },
+  ];
+  const clusters = phash.findTwins(entries, 2);
+  assert.strictEqual(clusters.length, 1, `expected 1 cluster, got ${clusters.length}`);
+  assert.deepStrictEqual(clusters[0].sort(), [1, 2]);
+  return "1 and 2 twinned, 3 untouched";
+});
+
+test("ledger round-trips completed work and spend", () => {
+  const dir = tmpdir();
+  const l = new Ledger(`${dir}/ledger.jsonl`).open();
+  l.append({ edition: 1, costUSD: 0.04 });
+  l.append({ edition: 2, costUSD: 0.04 });
+  l.close();
+  const { done, spentUSD } = new Ledger(`${dir}/ledger.jsonl`).read();
+  assert.strictEqual(done.size, 2);
+  assert.ok(Math.abs(spentUSD - 0.08) < 1e-9, `spend was ${spentUSD}`);
+  return "2 editions, $0.08 tallied";
+});
+
+test("ledger survives a truncated final line", () => {
+  const dir = tmpdir();
+  const f = `${dir}/ledger.jsonl`;
+  fs.writeFileSync(f, JSON.stringify({ edition: 1, costUSD: 0.04 }) + "\n" + '{"edition":2,"cost');
+  const { done, spentUSD, torn } = new Ledger(f).read();
+  assert.strictEqual(done.size, 1, "good line should survive");
+  assert.strictEqual(torn, 1, "torn line should be counted");
+  assert.ok(Math.abs(spentUSD - 0.04) < 1e-9);
+  return "kill -9 costs one image, not the run";
+});
+
+test("openrouter parses every documented image shape", () => {
+  const png = Buffer.from("fake-png-bytes");
+  const b64 = png.toString("base64");
+  const shapes = {
+    "data[].b64_json":       { data: [{ b64_json: b64 }] },
+    "images[].b64_json":     { images: [{ b64_json: b64 }] },
+    "data[].image_url.url":  { data: [{ image_url: { url: `data:image/png;base64,${b64}` } }] },
+    "images[].image_url":    { images: [{ image_url: { url: `data:image/png;base64,${b64}` } }] },
+  };
+  Object.entries(shapes).forEach(([label, json]) => {
+    const got = openrouter.extractImage(json);
+    assert.ok(got && got.buffer, `${label} did not yield bytes`);
+    assert.strictEqual(got.buffer.toString(), "fake-png-bytes", `${label} decoded wrong`);
+  });
+  const httpShape = openrouter.extractImage({ data: [{ url: "https://x/y.png" }] });
+  assert.strictEqual(httpShape.url, "https://x/y.png");
+  return `${Object.keys(shapes).length} base64 shapes + http url`;
+});
+
+test("openrouter refuses to invent an image", () => {
+  assert.strictEqual(openrouter.extractImage({ error: "nope" }), null);
+  assert.strictEqual(openrouter.extractImage({}), null);
+  return "unknown payload returns null, never a corrupt buffer";
+});
+
+test("phash detects a flat render", async () => {
+  const flat = await phash.isFlat(swatch("#123456", null));
+  const busy = await phash.isFlat(swatch("#123456", "bar"));
+  assert.strictEqual(flat.flat, true, "solid colour not detected as flat");
+  assert.strictEqual(busy.flat, false, "an image with content called flat");
+  return `flat stdDev ${flat.stdDev.toFixed(1)} vs busy ${busy.stdDev.toFixed(1)}`;
+});
+
+test("phash gives an identical image distance zero", async () => {
+  const img = swatch("#7FB2E5", "circle");
+  const a = await phash.hashImage(img);
+  const b = await phash.hashImage(img);
+  assert.strictEqual(phash.distance(a, b), 0);
+  return "0 bits";
+});
+
+test("phash separates images that differ only in colour", async () => {
+  // The bug this guards: dHash is brightness-based and scored a rose and a
+  // sky-blue background 0 bits apart, so every edition looked like a twin.
+  const a = await phash.hashImage(swatch("#EFA0B4", "circle"));
+  const b = await phash.hashImage(swatch("#7FB2E5", "circle"));
+  const structural = phash.distance(
+    await phash.structureHash(swatch("#EFA0B4", "circle")),
+    await phash.structureHash(swatch("#7FB2E5", "circle"))
+  );
+  const combined = phash.distance(a, b);
+  assert.ok(combined > structural,
+    `colour added nothing: structure ${structural}, combined ${combined}`);
+  assert.ok(combined > 0, "two different colours hashed identically");
+  return `structure ${structural} bits -> combined ${combined} bits`;
+});
+
+test("phash separates images that differ only in shape", async () => {
+  const a = await phash.hashImage(swatch("#CCCCCC", "circle"));
+  const b = await phash.hashImage(swatch("#CCCCCC", "bar"));
+  assert.ok(phash.distance(a, b) > 0, "different shapes hashed identically");
+  return `${phash.distance(a, b)} bits apart`;
+});
+
+test("pool halts when shouldStop flips", async () => {
+  let processed = 0;
+  const res = await pool(
+    Array.from({ length: 200 }, (_, i) => i),
+    async () => { processed++; },
+    { concurrency: 2, shouldStop: () => processed >= 20 }
+  );
+  assert.ok(res.stopped, "pool did not report stopping");
+  assert.ok(processed < 200, "pool ran everything despite shouldStop");
+  return `stopped after ${processed} of 200`;
+});
+
+test("pool respects the concurrency limit", async () => {
+  let inFlight = 0, peak = 0;
+  await pool(
+    Array.from({ length: 40 }, (_, i) => i),
+    async () => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 4));
+      inFlight--;
+    },
+    { concurrency: 4 }
+  );
+  assert.ok(peak <= 4, `peak concurrency was ${peak}, limit 4`);
+  assert.ok(peak > 1, "pool never actually parallelised");
+  return `peak ${peak} of 4`;
+});
+
+test("resume skips exactly what the ledger holds", () => {
+  const dir = tmpdir();
+  const l = new Ledger(`${dir}/ledger.jsonl`).open();
+  [1, 2, 5].forEach((e) => l.append({ edition: e, costUSD: 0 }));
+  l.close();
+  const { done } = new Ledger(`${dir}/ledger.jsonl`).read();
+  const plan = [1, 2, 3, 4, 5, 6].map((edition) => ({ edition }));
+  const queue = plan.filter((e) => !done.has(e.edition)).map((e) => e.edition);
+  assert.deepStrictEqual(queue, [3, 4, 6]);
+  return "1,2,5 done -> renders 3,4,6";
+});
+
+test("retries transient failures, never 4xx", async () => {
+  let calls = 0;
+  const out = await withRetry(async () => {
+    calls++;
+    if (calls < 3) throw new ProviderError("429 slow down", { status: 429, retryable: true });
+    return "ok";
+  }, { attempts: 4, baseMs: 1 });
+  assert.strictEqual(out, "ok");
+  assert.strictEqual(calls, 3);
+
+  let bad = 0;
+  await assert.rejects(
+    withRetry(async () => {
+      bad++;
+      throw new ProviderError("400 bad request", { status: 400, retryable: false });
+    }, { attempts: 4, baseMs: 1 })
+  );
+  assert.strictEqual(bad, 1, `a 400 was retried ${bad} times — that spends money on a known-bad request`);
+  return "429 retried 3x, 400 attempted once";
+});
+
+test("spend accounting never becomes NaN", () => {
+  // The adapter returns null when the provider reports no cost. If that
+  // reached the running total the ceiling would silently stop working.
+  const unitCost = 0.04;
+  const charge = (reported) =>
+    typeof reported === "number" && Number.isFinite(reported) ? reported : unitCost;
+  let spent = 0;
+  [null, undefined, NaN, 0.031, 0].forEach((r) => { spent += charge(r); });
+  assert.ok(Number.isFinite(spent), "spend went non-finite");
+  assert.ok(Math.abs(spent - (0.04 * 3 + 0.031 + 0)) < 1e-9, `got ${spent}`);
+  return `null/undefined/NaN fall back to catalogue price`;
+});
+
+test("token bucket throttles to its rate", async () => {
+  const b = new TokenBucket(600); // 10/sec
+  const start = Date.now();
+  for (let i = 0; i < 14; i++) await b.take();
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed >= 300, `14 tokens at 10/s took only ${elapsed}ms`);
+  return `14 tokens took ${elapsed}ms`;
+});
+
+test("writeAtomic never leaves a partial file", () => {
+  const dir = tmpdir();
+  const f = `${dir}/nested/deep/out.json`;
+  writeAtomic(f, '{"a":1}');
+  assert.strictEqual(fs.readFileSync(f, "utf8"), '{"a":1}');
+  assert.ok(!fs.existsSync(`${f}.tmp`), "temp file left behind");
+  return "creates dirs, cleans up tmp";
 });
 
 // ───────────────────────────────────────────────────────────────── report ────

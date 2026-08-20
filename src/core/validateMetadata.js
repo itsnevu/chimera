@@ -77,10 +77,12 @@ const validateCollection = (collection, { network = "eth", traitNames = [] } = {
     }
 
     // ── attributes ──────────────────────────────────────────────────────────
-    const attrs = network === "sol" ? item.attributes : item.attributes;
+    const attrs = item.attributes;
     if (attrs !== undefined) {
       if (!Array.isArray(attrs)) {
         err(id, "attributes must be an array");
+      } else if (!attrs.length) {
+        err(id, "attributes is empty — this edition has no traits");
       } else {
         const seenTypes = new Set();
         attrs.forEach((a, ai) => {
@@ -88,8 +90,11 @@ const validateCollection = (collection, { network = "eth", traitNames = [] } = {
             err(id, `attribute ${ai} is not an object`);
             return;
           }
-          if (typeof a.trait_type !== "string" || !a.trait_type) {
-            err(id, `attribute ${ai} has no trait_type`);
+          // OpenSea documents omitting trait_type and giving only a string
+          // value as a valid "generic" attribute, so its absence is legal —
+          // only a present-but-wrong type is an error.
+          if (a.trait_type !== undefined && (typeof a.trait_type !== "string" || !a.trait_type)) {
+            err(id, `attribute ${ai} has an empty or non-string trait_type`);
           }
           if (a.value === undefined || a.value === null || a.value === "") {
             err(id, `attribute "${a.trait_type}" has no value`);
@@ -123,13 +128,41 @@ const validateCollection = (collection, { network = "eth", traitNames = [] } = {
       } else if (!files[0].uri || !files[0].type) {
         err(id, "properties.files[0] needs uri and type");
       }
-      if (!Array.isArray(item.properties.creators)) {
+      const creators = item.properties.creators;
+      if (!Array.isArray(creators)) {
         warn(id, "properties.creators is missing");
+      } else if (!creators.length) {
+        warn(id, "properties.creators is empty — this edition pays no royalties");
+      } else {
+        // Metaplex rejects the mint outright with ShareTotalMustBe100, so a
+        // split that does not add up is a hard failure, not a warning.
+        let total = 0;
+        creators.forEach((c, ci) => {
+          if (!c || typeof c !== "object") {
+            err(id, `properties.creators[${ci}] is not an object`);
+            return;
+          }
+          if (typeof c.address !== "string" || !c.address) {
+            err(id, `properties.creators[${ci}] has no address`);
+          }
+          if (!Number.isFinite(c.share)) {
+            err(id, `properties.creators[${ci}] has a non-numeric share`);
+          } else {
+            total += c.share;
+          }
+        });
+        if (total !== 100) {
+          err(id, `properties.creators shares total ${total}, must be exactly 100`);
+        }
       }
     }
   });
 
   if (traitSignatures.size > 1) {
+    // Kept an error deliberately. No marketplace *requires* a uniform trait
+    // set — a hand-made collection of 1/1s legitimately varies — but this
+    // engine gives every edition every trait, so a mismatch in its own output
+    // means something dropped a trait, and rarity denominators will disagree.
     errors.push({
       edition: null,
       problem: `editions do not share the same trait set — ${traitSignatures.size} different shapes found`,

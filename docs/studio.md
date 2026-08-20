@@ -77,6 +77,16 @@ style bible.
 `GET` returns the last report. `POST { verify?, apiKey?, twinDistance? }` runs
 QC.
 
+`POST` bodies are validated: `twinDistance` must be a number (a string could
+otherwise be read as a CLI flag), and a paid `verify` run requires
+`confirm: true` — the Studio sends it only after the confirmation dialog is
+acknowledged.
+
+Every mutating route also refuses a cross-origin request. If you are driving
+these endpoints from something other than the Studio page, send no `Origin`
+header (curl does this by default) or one pointing at the loopback host;
+anything else returns 403.
+
 ### `GET /api/ship` · `POST /api/ship`
 
 `GET` reports how many editions exist, how many still carry placeholder URIs

@@ -147,4 +147,43 @@ const unreachableTraits = (traitConfig) => {
     .map((t) => t.name);
 };
 
-module.exports = { promptFor, seedFrom, seedFor, unreachableTraits, resolveTemplate };
+/**
+ * A promptTemplate naming a trait that does not exist does nothing at all —
+ * no error, no output, just a slot that never fills. Usually a rename that
+ * only got applied in one place.
+ *
+ * @returns {Array<String>} problems, empty when the template is sound
+ */
+const templateProblems = (traitConfig) => {
+  if (!traitConfig.promptTemplate) return [];
+  const known = new Set(traitConfig.traits.map((t) => t.name));
+  const composited = new Set(traitConfig.compositeLocally || []);
+  const problems = [];
+
+  SLOT_ORDER.forEach((slot) => {
+    const declared = traitConfig.promptTemplate[slot];
+    if (declared === undefined) return;
+    (Array.isArray(declared) ? declared : [declared]).forEach((name) => {
+      if (!known.has(name)) {
+        problems.push(`promptTemplate.${slot} names "${name}", which is not a trait`);
+      } else if (composited.has(name)) {
+        problems.push(
+          `promptTemplate.${slot} names "${name}", but it is composited locally ` +
+          `so it must not go into the prompt`
+        );
+      }
+    });
+  });
+
+  (traitConfig.compositeLocally || []).forEach((name) => {
+    if (!known.has(name)) {
+      problems.push(`compositeLocally names "${name}", which is not a trait`);
+    }
+  });
+
+  return problems;
+};
+
+module.exports = {
+  promptFor, seedFrom, seedFor, unreachableTraits, resolveTemplate, templateProblems,
+};

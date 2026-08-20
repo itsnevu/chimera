@@ -48,6 +48,13 @@ const buildLayers = (traitConfig) =>
 /** Validate before anything expensive happens. */
 const validate = (traitConfig) => {
   const errors = [];
+  // Required lazily: promptBuilder requires constraints.js, which requires
+  // dna.js, which requires config.js — a top-level require here would make
+  // that cycle load-bearing.
+  const {
+    unreachableTraits,
+    templateProblems,
+  } = require(`${basePath}/src/prompt/promptBuilder.js`);
   if (!Array.isArray(traitConfig.traits) || !traitConfig.traits.length) {
     errors.push("traits array is empty");
   }
@@ -115,6 +122,24 @@ const validate = (traitConfig) => {
     checkClause(rule.forbid, "forbid", i, true);
     checkClause(rule.require, "require", i, true);
   });
+
+  // A trait that never reaches the model is the failure this engine exists to
+  // prevent: the metadata claims it, the picture does not have it. Catch it
+  // here, in the free step, rather than after a thousand paid renders.
+  if (Array.isArray(traitConfig.traits) && traitConfig.traits.length) {
+    try {
+      unreachableTraits(traitConfig).forEach((name) =>
+        errors.push(
+          `trait "${name}" never reaches the prompt — name it in promptTemplate, ` +
+          `list it in compositeLocally, or set prompt: null on its options if ` +
+          `it is deliberately silent`
+        )
+      );
+      templateProblems(traitConfig).forEach((p) => errors.push(p));
+    } catch (err) {
+      errors.push(`could not check prompt reachability: ${err.message}`);
+    }
+  }
 
   return errors;
 };

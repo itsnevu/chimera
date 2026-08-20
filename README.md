@@ -131,13 +131,16 @@ budget in [`src/ai.config.js`](src/ai.config.js), then:
 npm run ai:doctor                        # pre-flight: traits, space, key, budget
 npm run ai:plan                          # roll offline, estimate cost. FREE
 
+# ai:ref renders a master through the provider, so it needs your key and your
+# character image before it will run. Save the image as ./reference.png first
+# (it is gitignored, so a fresh clone has none).
+export OPENROUTER_API_KEY=sk-or-...
 npm run ai:ref                           # normalise your image + render a master
 npm run ai:ref -- --approve              # after you have LOOKED at it
 npm run ai:ref -- --anchors              # optional: how it wears things
 npm run ai:generate -- --provider mock   # full dry run. FREE
 npm run ai:finalize                      # composite backgrounds, write metadata
 
-export OPENROUTER_API_KEY=sk-or-...
 npm run ai:smoke -- --yes                # 5 real images, ~$0.20
 npm run ai:generate -- --yes             # the real thing
 npm run ai:resume -- --yes               # continue after a stop. Never re-bills

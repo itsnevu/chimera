@@ -10,12 +10,27 @@ them.
 maxSpendUSD: 50,
 ```
 
-A **hard ceiling**, not a warning. There is no prompt to override it — you
+A hard ceiling **per command**, not a warning: no prompt overrides it, you
 raise the number deliberately or the run stops.
+
+**It is not a single budget for the whole pipeline.** Three stages spend, and
+each measures itself against its own copy of `maxSpendUSD`:
+
+| Stage | Counts against | Remembers previous runs? |
+|---|---|---|
+| `ai:ref` (style bible) | `build/ai/reference/state.json` | yes |
+| `ai:generate` | `build/ai/ledger.jsonl` | yes |
+| `ai:qc --verify` | its own in-process total | **no — resets every run** |
+
+So `maxSpendUSD: 50` permits up to $50 of reference renders, $50 of editions,
+and $50 of verification per invocation. If you want one number to bound the
+whole project, set it to roughly a third of what you are willing to spend, or
+watch the running totals each stage prints.
 
 Set it to `0` to permit only the free `mock` provider.
 
-Override for a single run: `--max-spend 5`
+Override for a single run: `--max-spend 5` (the Studio clamps this to the
+configured value — a request may lower the ceiling, never raise it)
 
 ## Where it is enforced
 
@@ -125,9 +140,20 @@ the running total stays finite through `null`, `undefined` and `NaN`.
 | style bible master | ~$0.04 |
 | anchors (optional) | ~$0.08 |
 | smoke test | ~$0.20 |
-| full generate | $40.00 |
+| full generate, no retries | $40.00 |
 | +15% reroll allowance | **$46.00 — plan for this** |
 | QC free tier | $0 |
-| QC trait verification | varies by vision model |
+| QC trait verification | ~$10.00 (1,000 x $0.01 reserved per call) |
 
-**Total risk before the go/no-go decision: about $0.32.**
+Two things make these figures a floor rather than a bound:
+
+- **Every dispatched attempt is billed.** A response that times out after the
+  image was generated, arrives unparseable, or carries an empty image is
+  charged the same as a good one, and `maxAttemptsPerEdition` is 3. The
+  worst case for a 1,000-edition run is $120, not $40 — the ceiling is what
+  stops it, which is why leaving `maxSpendUSD` at a real number matters.
+- **QC verification is a separate budget** (see above), so its ~$10 is on top
+  of the $46, not inside it.
+
+**Risk before the go/no-go decision: about $0.32 if nothing retries, and up to
+about $0.72 if the smoke test exhausts its retries.**

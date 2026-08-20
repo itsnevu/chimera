@@ -7,7 +7,7 @@ Four files. Each owns one concern.
 | `src/config.js` | collection identity — name, description, baseUri, chain |
 | `src/ai.config.js` | AI mode — model, budget, concurrency |
 | `chimera.traits.js` | your traits, weights, constraints, style anchor |
-| `.env` | your API key (gitignored) |
+| `.env` | not read by the engine — see "API keys" below |
 
 ---
 
@@ -177,7 +177,10 @@ Resolution order, most explicit first:
 
 1. `--api-key <key>`
 2. `OPENROUTER_API_KEY` in the environment
-3. `.env` in the repo root (gitignored)
+3. ~~`.env` in the repo root~~ — **not implemented.** There is no `dotenv`
+   dependency, so a `.env` file is never loaded. Export the variable in your
+   shell, or pass `--api-key`. `PINATA_JWT` for publishing is read the same
+   way, from the environment only.
 
 The key **never** enters `src/config.js`, `plan.json`, the ledger, or any error
 dump. Every log line passes through a redactor that strips `sk-*` and
