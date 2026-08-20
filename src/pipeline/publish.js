@@ -21,6 +21,7 @@ const { uploadFile } = require(`${basePath}/src/publish/pinata.js`);
 const { Ledger, writeAtomic } = require(`${basePath}/src/pipeline/jobState.js`);
 const { pool } = require(`${basePath}/src/pipeline/queue.js`);
 const { withRetry, redact } = require(`${basePath}/src/providers/base.js`);
+const { parser, fail } = require(`${basePath}/src/cli/args.js`);
 
 const IMAGES = `${basePath}/build/images`;
 const JSON_DIR = `${basePath}/build/json`;
@@ -30,13 +31,11 @@ const num = (n) => n.toLocaleString("en-US");
 const die = (m) => { console.error(`\n  ERROR  ${m}\n`); process.exit(1); };
 
 async function main() {
-  const argv = process.argv.slice(2);
-  const has = (f) => argv.includes(f);
-  const arg = (f, d) => { const i = argv.indexOf(f); return i === -1 ? d : argv[i + 1]; };
+  const { has, arg, number } = parser(process.argv.slice(2));
 
   const jwt = arg("--jwt", process.env.PINATA_JWT);
   const yes = has("--yes");
-  const concurrency = Number(arg("--concurrency", 6));
+  const concurrency = number("--concurrency", 6, { min: 1, max: 32, integer: true });
 
   if (!fs.existsSync(IMAGES)) die(`no images at build/images. Run:  npm run ai:finalize`);
   const images = fs.readdirSync(IMAGES).filter((f) => f.endsWith(".png"))
@@ -120,4 +119,4 @@ async function main() {
   console.log(`         then pin build/json/ and set baseUri to that CID\n`);
 }
 
-main().catch((e) => die(redact(e.stack || e.message)));
+main().catch((e) => fail(e, redact));

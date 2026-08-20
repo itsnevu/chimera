@@ -23,8 +23,9 @@ const REJECTS = `${AI_DIR}/rejects`;
 const money = (n) => `$${n.toFixed(2)}`;
 const die = (m) => { console.error(`\n  ERROR  ${m}\n`); process.exit(1); };
 
-const argv = process.argv.slice(2);
-const yes = argv.includes("--yes");
+const { parser, fail } = require(`${basePath}/src/cli/args.js`);
+const { has } = parser(process.argv.slice(2));
+const yes = has("--yes");
 
 if (!fs.existsSync(REPORT)) die("no qc.json — run:  npm run ai:qc");
 const report = JSON.parse(fs.readFileSync(REPORT, "utf8"));
@@ -64,9 +65,27 @@ drop.forEach((rec) => {
   }
 });
 
-writeAtomic(LEDGER, keep.map((r) => JSON.stringify(r)).join("\n") + (keep.length ? "\n" : ""));
+// Dropping the flagged rows also drops what they cost, which would hand that
+// budget back to the ceiling: re-render, flag, requeue, repeat, and the run
+// spends without limit while the ledger total never moves. Carry the money
+// forward in a row that counts toward spend but marks no edition as done.
+const carried = drop.reduce((a, r) => a + (r.costUSD || 0), 0);
+const carryRow = carried > 0
+  ? JSON.stringify({
+      carriedFrom: "requeue",
+      costUSD: carried,
+      editions: drop.length,
+      at: new Date().toISOString(),
+    }) + "\n"
+  : "";
+
+writeAtomic(LEDGER, carryRow + keep.map((r) => JSON.stringify(r)).join("\n") + (keep.length ? "\n" : ""));
 
 console.log(`\n  backed up       ${path.basename(LEDGER)}.${stamp}.bak`);
 console.log(`  moved aside     ${moved} images -> build/ai/rejects/`);
 console.log(`  ledger now      ${keep.length} editions`);
+if (carried > 0) {
+  console.log(`  carried spend   $${carried.toFixed(2)} from the removed editions still counts`);
+  console.log(`                  toward your ceiling — that money was already billed.`);
+}
 console.log(`\n  Next:  npm run ai:generate -- --yes    re-renders the ${drop.length} removed\n`);

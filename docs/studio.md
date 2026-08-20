@@ -23,8 +23,9 @@ shells out to it.
 ────────────────────          ────────────────────────────────
 01  STYLE REFERENCE           every planned edition as a cell
 02  PLAN — FREE, OFFLINE      rendered ones show their art
-03  GENERATE                  click any cell -> traits + prompt
-04  QUALITY CONTROL           live engine log underneath
+03  GENERATE                  QC-flagged ones carry an amber corner
+04  QUALITY CONTROL           click any cell -> traits + prompt
+05  SHIP                      live engine log underneath
 ```
 
 Each stage shows its own state — `DONE`, `NOW`, `BLOCKED`, or idle — so the
@@ -75,6 +76,25 @@ style bible.
 
 `GET` returns the last report. `POST { verify?, apiKey?, twinDistance? }` runs
 QC.
+
+### `GET /api/ship` · `POST /api/ship`
+
+`GET` reports how many editions exist, how many still carry placeholder URIs
+or descriptions, and how many are pinned.
+
+`POST { action: "doctor" | "validate" | "publish", jwt?, confirm? }`. Doctor and
+validate are free and read-only. Publish without `confirm` is a dry run;
+`confirm: true` requires a JWT and actually pins.
+
+### Spend confirmations
+
+Anything that costs money — a paid run, a paid smoke test, paid trait
+verification — opens a modal that names the figure before it is spent. So does
+re-rolling a plan when editions have already been paid for, because new traits
+would be assigned to edition numbers whose art already exists.
+
+Pinning gets the same treatment, with different wording: the risk there is not
+cost but permanence.
 
 ### `GET /api/image/[id]`
 

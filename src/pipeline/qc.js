@@ -24,6 +24,8 @@ const { pool } = require(`${basePath}/src/pipeline/queue.js`);
 const { verifyTraits } = require(`${basePath}/src/providers/vision.js`);
 const { resolveKey } = require(`${basePath}/src/providers/index.js`);
 const { withRetry, redact } = require(`${basePath}/src/providers/base.js`);
+const { parser, fail } = require(`${basePath}/src/cli/args.js`);
+const { USD_PER_QC_CALL } = require(`${basePath}/src/providers/models.js`);
 
 const AI_DIR = `${basePath}/build/ai`;
 const PLAN = `${AI_DIR}/plan.json`;
@@ -35,14 +37,12 @@ const money = (n) => `$${n.toFixed(2)}`;
 const die = (m) => { console.error(`\n  ERROR  ${m}\n`); process.exit(1); };
 
 async function main() {
-  const argv = process.argv.slice(2);
-  const has = (f) => argv.includes(f);
-  const arg = (f, d) => { const i = argv.indexOf(f); return i === -1 ? d : argv[i + 1]; };
+  const { has, arg, number } = parser(process.argv.slice(2));
 
   const verify = has("--verify");
-  const twinDistance = Number(arg("--twin-distance", 5));
-  const sample = Number(arg("--sample", 0));
-  const maxSpend = Number(arg("--max-spend", ai.maxSpendUSD));
+  const twinDistance = number("--twin-distance", 5, { min: 0, max: 64, integer: true });
+  const sample = number("--sample", 0, { min: 0, integer: true });
+  const maxSpend = number("--max-spend", ai.maxSpendUSD, { min: 0 });
   const qcModel = arg("--qc-model", ai.qcModel || "google/gemini-3.1-flash-image");
 
   if (!fs.existsSync(PLAN)) die("no plan found. Run:  npm run ai:plan");
@@ -117,7 +117,7 @@ async function main() {
   console.log(`  visual twins    ${twins.length} cluster(s) covering ${num(twinned)} editions`);
 
   // ── paid tier ────────────────────────────────────────────────────────────
-  let verified = 0, mismatches = 0, qcSpent = 0;
+  let verified = 0, mismatches = 0, qcSpent = 0, qcHalted = false;
 
   if (verify) {
     const apiKey = resolveKey("openrouter", arg("--api-key", null));
@@ -133,14 +133,31 @@ async function main() {
       await pool(
         checkable,
         async (rec) => {
-          if (qcSpent >= maxSpend) return;
+          // Check before the call, not after — and against the reservation,
+          // so concurrent workers cannot all pass on the same stale total.
+          if (qcSpent + USD_PER_QC_CALL > maxSpend) { qcHalted = true; return; }
+
+          // Reserve up-front, for the same reason renders do: every dispatched
+          // vision call is billed, including the ones whose answer we could not
+          // parse and retried. Adding cost only on success leaves the total at
+          // zero, and a ceiling compared against zero never fires.
+          qcSpent += USD_PER_QC_CALL;
+          let billedCalls = 1;
+
           try {
             const image = fs.readFileSync(`${basePath}/${rec.file}`);
             const out = await withRetry(
               () => verifyTraits({ image, traits: rec.traits, skip, model: qcModel, apiKey }),
-              { attempts: 3, baseMs: 900 }
+              {
+                attempts: 3,
+                baseMs: 900,
+                onRetry: () => { qcSpent += USD_PER_QC_CALL; billedCalls++; },
+              }
             );
-            qcSpent += out.costUSD || 0;
+            // Reconcile the successful call against what was actually charged.
+            const reported =
+              typeof out.costUSD === "number" && Number.isFinite(out.costUSD) ? out.costUSD : null;
+            if (reported !== null) qcSpent += reported - USD_PER_QC_CALL;
             verified++;
 
             const absent = out.verdicts.filter((v) => v.present === false);
@@ -154,9 +171,13 @@ async function main() {
             flag(rec.edition, `QC failed: ${redact(err.message)}`);
           }
         },
-        { concurrency: ai.concurrency, shouldStop: () => qcSpent >= maxSpend }
+        { concurrency: ai.concurrency, shouldStop: () => qcSpent + USD_PER_QC_CALL > maxSpend }
       );
       console.log(`  verified        ${num(verified)},  ${num(mismatches)} with a missing trait,  ${money(qcSpent)}`);
+      if (qcHalted) {
+        console.log(`  ! HALTED at the ${money(maxSpend)} ceiling — ${num(checkable.length - verified)} editions unchecked.`);
+        console.log(`    QC spend is counted separately from render spend; raise maxSpendUSD to finish.`);
+      }
     }
   }
 
@@ -191,4 +212,4 @@ async function main() {
   }
 }
 
-main().catch((e) => die(redact(e.stack || e.message)));
+main().catch((e) => fail(e, redact));

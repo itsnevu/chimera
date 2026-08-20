@@ -70,6 +70,10 @@ const render = async ({
     n: 1,
     output_format: output.format === "jpeg" ? "jpeg" : "png",
     seed,
+    // Without this OpenRouter omits `usage.cost` entirely, so the ledger falls
+    // back to catalogue prices on every single row and `reportedCost` is null
+    // forever — the spend figures would never reflect what was actually billed.
+    usage: { include: true },
   };
 
   // Square output is the PFP norm; ask explicitly so aspect never drifts.

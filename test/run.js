@@ -764,6 +764,126 @@ test("pinata adapter refuses to invent a CID", async () => {
   return "no JWT throws before any request";
 });
 
+
+// ────────────────────────────────────── argument parsing + engine guards ────
+
+const { parser, UsageError } = require(`${basePath}/src/cli/args.js`);
+
+test("a number flag that cannot parse is rejected, not passed through", () => {
+  // This is the whole point: guards read `spent + unit > maxSpend`, and every
+  // comparison against NaN is false. A NaN ceiling is not a loose ceiling,
+  // it is no ceiling at all.
+  const bad = ["--max-spend", "abc"];
+  assert.throws(() => parser(bad).number("--max-spend", 50), UsageError);
+  assert.throws(() => parser(["--max-spend", "1,000"]).number("--max-spend", 50), UsageError);
+  assert.throws(() => parser(["--max-spend"]).number("--max-spend", 50), /needs a value/);
+  // The classic: the next flag eaten as this flag's value.
+  assert.throws(() => parser(["--limit", "--yes"]).number("--limit", 0), /needs a value/);
+  return "abc, 1,000, missing value and flag-as-value all rejected";
+});
+
+test("number bounds and integer-ness are enforced", () => {
+  const p = (v) => parser(["--size", v]);
+  assert.throws(() => p("0").number("--size", 10, { min: 1 }), /at least 1/);
+  assert.throws(() => p("1e9").number("--size", 10, { max: 100000 }), /at most 100000/);
+  assert.throws(() => p("1.5").number("--size", 10, { integer: true }), /whole number/);
+  assert.strictEqual(p("500").number("--size", 10, { min: 1, max: 100000, integer: true }), 500);
+  return "min, max and integer all checked";
+});
+
+test("an absent flag falls back without going through string parsing", () => {
+  const { number, arg } = parser([]);
+  assert.strictEqual(number("--max-spend", 50), 50);
+  assert.strictEqual(arg("--model", "seedream"), "seedream");
+  return "config defaults are trusted, argv is not";
+});
+
+test("choice rejects an unknown provider at the boundary", () => {
+  const { choice } = parser(["--provider", "bogus"]);
+  assert.throws(() => choice("--provider", "mock", ["mock", "openrouter"]), /must be one of/);
+  assert.strictEqual(
+    parser(["--provider", "mock"]).choice("--provider", "openrouter", ["mock", "openrouter"]),
+    "mock"
+  );
+  return "typo caught here, not as module-not-found later";
+});
+
+test("a layer with no selectable weight throws instead of shifting the DNA", () => {
+  // Silently skipping the layer would leave every later layer decoding at the
+  // wrong index — the whole collection's metadata would be quietly wrong.
+  const broken = [
+    { id: 0, name: "Empty", elements: [], bypassDNA: false },
+  ];
+  assert.throws(() => createDna(broken), /no selectable elements/);
+  const zeroed = [
+    { id: 0, name: "Zeroed", bypassDNA: false,
+      elements: [{ id: 0, name: "x", filename: "x#0.txt", weight: 0 }] },
+  ];
+  assert.throws(() => createDna(zeroed), /weights sum to 0/);
+  return "empty and all-zero layers both refuse";
+});
+
+test("fractional weights are sampled in proportion", () => {
+  // Flooring the roll quantises it to whole numbers: two options at weight 0.5
+  // give totalWeight 1, every floored roll is 0, and the first option wins
+  // every time.
+  const layers = [{
+    id: 0, name: "Half", bypassDNA: false,
+    elements: [
+      { id: 0, name: "a", filename: "a#0.5.txt", weight: 0.5 },
+      { id: 1, name: "b", filename: "b#0.5.txt", weight: 0.5 },
+    ],
+  }];
+  let a = 0;
+  const N = 20000;
+  for (let i = 0; i < N; i++) if (cleanDna(createDna(layers)) === 0) a++;
+  const share = a / N;
+  assert.ok(Math.abs(share - 0.5) < 0.03, `option a took ${(share * 100).toFixed(1)}% of rolls, expected ~50%`);
+  return `even split at weight 0.5 each: ${(share * 100).toFixed(1)}%`;
+});
+
+test("openrouter and QC both ask for real spend figures", async () => {
+  // Without usage.include OpenRouter omits usage.cost, the ledger silently
+  // falls back to catalogue prices on every row, and the spend total stops
+  // reflecting what was actually billed.
+  const bodies = [];
+  const realFetch = global.fetch;
+  global.fetch = async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        data: [{ b64_json: Buffer.from("x".repeat(200)).toString("base64") }],
+        choices: [{ message: { content: '{"traits":[]}' } }],
+        usage: { cost: 0.031 },
+      }),
+    };
+  };
+  try {
+    const out = await openrouter.render({
+      prompt: "p", negative: "", seed: 1, references: [],
+      output: { width: 1024, height: 1024, format: "png" },
+      model: "m", apiKey: "sk-test",
+    });
+    assert.strictEqual(out.costUSD, 0.031, "reported cost was not preferred over the estimate");
+
+    const { verifyTraits } = require(`${basePath}/src/providers/vision.js`);
+    await verifyTraits({
+      image: Buffer.from("x"), traits: { Fur: "Calico" }, skip: [],
+      model: "m", apiKey: "sk-test",
+    });
+  } finally {
+    global.fetch = realFetch;
+  }
+  assert.strictEqual(bodies.length, 2, "expected an image call and a QC call");
+  bodies.forEach((b, i) => {
+    assert.ok(b.usage && b.usage.include === true,
+      `request ${i} did not ask for usage — spend would be a guess`);
+  });
+  return "both adapters send usage.include, and real cost wins";
+});
+
 // ───────────────────────────────────────────────────────────────── report ────
 
 (async () => {

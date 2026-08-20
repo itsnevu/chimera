@@ -20,6 +20,7 @@ const { check, decode } = require(`${basePath}/src/core/constraints.js`);
 const { assess } = require(`${basePath}/src/core/traitSpace.js`);
 const { promptFor } = require(`${basePath}/src/prompt/promptBuilder.js`);
 const models = require(`${basePath}/src/providers/models.js`);
+const { parser, fail } = require(`${basePath}/src/cli/args.js`);
 
 const AI_DIR = `${basePath}/build/ai`;
 const PLAN = `${AI_DIR}/plan.json`;
@@ -33,15 +34,11 @@ const die = (msg) => {
 };
 
 function main() {
-  const argv = process.argv.slice(2);
-  const arg = (flag, fallback) => {
-    const i = argv.indexOf(flag);
-    return i === -1 ? fallback : argv[i + 1];
-  };
+  const { arg, number } = parser(process.argv.slice(2));
 
-  const editionSize = Number(arg("--size", ai.editionSize));
+  const editionSize = number("--size", ai.editionSize, { min: 1, max: 100000, integer: true });
   const modelId = arg("--model", ai.model);
-  const maxSpend = Number(arg("--max-spend", ai.maxSpendUSD));
+  const maxSpend = number("--max-spend", ai.maxSpendUSD, { min: 0 });
 
   console.log(`\nCHIMERA — PLAN\n${"─".repeat(62)}`);
 
@@ -189,4 +186,10 @@ function main() {
   console.log(`    npm run ai:generate   run the whole thing\n`);
 }
 
-main();
+try {
+  main();
+} catch (err) {
+  // A typo gets one line; a real fault keeps its stack, because that one is
+  // ours to debug rather than the user's to decipher.
+  fail(err);
+}

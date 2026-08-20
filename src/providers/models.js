@@ -78,4 +78,16 @@ const get = (id) => {
   return m;
 };
 
-module.exports = { MODELS, get, PRICED_ON };
+/**
+ * Fallback price for one QC vision call, used only when the provider reports
+ * no cost of its own. A verification call sends a 1024x1024 PNG (~1,300 image
+ * tokens) plus a short prompt, and takes back at most 700 tokens — a cent is
+ * a deliberate over-estimate on current flash-tier vision pricing.
+ *
+ * Over-estimating is the safe direction: it halts a run early, which the user
+ * can undo by raising the ceiling. Under-estimating overspends their money,
+ * which they cannot undo.
+ */
+const USD_PER_QC_CALL = 0.01;
+
+module.exports = { MODELS, get, PRICED_ON, USD_PER_QC_CALL };

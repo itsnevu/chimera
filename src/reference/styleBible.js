@@ -24,9 +24,10 @@ const fs = require("fs");
 const ai = require(`${basePath}/src/ai.config.js`);
 const traitConfig = require(`${basePath}/chimera.traits.js`);
 const { prepare } = require(`${basePath}/src/reference/prepareReference.js`);
-const { getProvider, resolveKey } = require(`${basePath}/src/providers/index.js`);
+const { getProvider, resolveKey, PROVIDERS } = require(`${basePath}/src/providers/index.js`);
 const { writeAtomic } = require(`${basePath}/src/pipeline/jobState.js`);
 const { withRetry, redact } = require(`${basePath}/src/providers/base.js`);
+const { parser, fail } = require(`${basePath}/src/cli/args.js`);
 const models = require(`${basePath}/src/providers/models.js`);
 
 const REF_DIR = `${basePath}/build/ai/reference`;
@@ -210,9 +211,7 @@ const loadReferenceSet = () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const argv = process.argv.slice(2);
-  const has = (f) => argv.includes(f);
-  const arg = (f, d) => { const i = argv.indexOf(f); return i === -1 ? d : argv[i + 1]; };
+  const { has, arg, number, choice } = parser(process.argv.slice(2));
 
   if (has("--status")) return status();
 
@@ -224,9 +223,9 @@ async function main() {
     return;
   }
 
-  const providerId = arg("--provider", ai.provider);
+  const providerId = choice("--provider", ai.provider, PROVIDERS);
   const model = arg("--model", ai.model);
-  const maxSpend = Number(arg("--max-spend", ai.maxSpendUSD));
+  const maxSpend = number("--max-spend", ai.maxSpendUSD, { min: 0 });
   const apiKey = resolveKey(providerId, arg("--api-key", null));
   if (providerId !== "mock" && !apiKey) {
     die(`no API key for "${providerId}".  export OPENROUTER_API_KEY=...`);
@@ -237,7 +236,7 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().catch((e) => die(redact(e.stack || e.message)));
+  main().catch((e) => fail(e, redact));
 }
 
 module.exports = { loadReferenceSet, masterPrompt, MASTER, REF_DIR };

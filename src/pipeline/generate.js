@@ -18,11 +18,12 @@ const fs = require("fs");
 const path = require("path");
 
 const ai = require(`${basePath}/src/ai.config.js`);
-const { getProvider, resolveKey } = require(`${basePath}/src/providers/index.js`);
+const { getProvider, resolveKey, PROVIDERS } = require(`${basePath}/src/providers/index.js`);
 const { Ledger } = require(`${basePath}/src/pipeline/jobState.js`);
 const { pool } = require(`${basePath}/src/pipeline/queue.js`);
 const { withRetry, redact } = require(`${basePath}/src/providers/base.js`);
 const { loadReferenceSet } = require(`${basePath}/src/reference/styleBible.js`);
+const { parser, fail } = require(`${basePath}/src/cli/args.js`);
 
 const AI_DIR = `${basePath}/build/ai`;
 const PLAN = `${AI_DIR}/plan.json`;
@@ -34,14 +35,12 @@ const num = (n) => n.toLocaleString("en-US");
 const die = (m) => { console.error(`\n  ERROR  ${m}\n`); process.exit(1); };
 
 async function main() {
-  const argv = process.argv.slice(2);
-  const has = (f) => argv.includes(f);
-  const arg = (f, d) => { const i = argv.indexOf(f); return i === -1 ? d : argv[i + 1]; };
+  const { has, arg, number, choice } = parser(process.argv.slice(2));
 
-  const limit = Number(arg("--limit", 0));           // smoke tests use this
-  const providerId = arg("--provider", ai.provider);
-  const maxSpend = Number(arg("--max-spend", ai.maxSpendUSD));
-  const concurrency = Number(arg("--concurrency", ai.concurrency));
+  const limit = number("--limit", 0, { min: 0, integer: true });   // smoke tests use this
+  const providerId = choice("--provider", ai.provider, PROVIDERS);
+  const maxSpend = number("--max-spend", ai.maxSpendUSD, { min: 0 });
+  const concurrency = number("--concurrency", ai.concurrency, { min: 1, max: 64, integer: true });
   const yes = has("--yes");
 
   if (!fs.existsSync(PLAN)) die(`no plan found. Run:  npm run ai:plan`);
@@ -130,6 +129,18 @@ async function main() {
       // Guard again here: workers already in flight may have pushed us over.
       if (spent + unitCost > maxSpend) { halted = true; return; }
 
+      // The provider bills for a generated image whether or not we could use
+      // it: a response that times out after generation, arrives unparseable,
+      // or carries an empty image is charged all the same. Counting only
+      // successes is how a run bills three times per edition and still prints
+      // "spent $0.00" while the ceiling never fires.
+      //
+      // Charging up-front also closes the TOCTOU window — otherwise every
+      // concurrent worker reads the same stale total and all of them pass the
+      // check above, overshooting by (concurrency - 1) images.
+      spent += unitCost;
+      let billedAttempts = 1;
+
       try {
         const out = await withRetry(
           () =>
@@ -145,24 +156,30 @@ async function main() {
             }),
           {
             attempts: ai.maxAttemptsPerEdition,
-            onRetry: (n, wait, err) =>
-              console.log(`    retry ${n} for #${job.edition} in ${wait}ms — ${redact(err.message)}`),
+            onRetry: (n, wait, err) => {
+              // onRetry fires after an attempt failed and before the next one
+              // runs, so the retry about to be dispatched is billable too.
+              spent += unitCost;
+              billedAttempts++;
+              console.log(`    retry ${n} for #${job.edition} in ${wait}ms — ${redact(err.message)}`);
+            },
           }
         );
 
         const file = `${RAW}/${String(job.edition).padStart(5, "0")}.png`;
         fs.writeFileSync(file, out.buffer);
 
-        // Prefer the provider's reported spend; fall back to the catalogue
-        // price when it reports none. Never let null poison the running
-        // total — a NaN here would silently disable the spend ceiling.
-        const charged =
-          typeof out.costUSD === "number" && Number.isFinite(out.costUSD)
-            ? out.costUSD
-            : unitCost;
+        // Swap the estimate for the successful attempt with what the provider
+        // says it actually charged. Failed attempts keep the catalogue price,
+        // which is the only figure available for them. Never let a null or a
+        // NaN reach the running total — that would disable the ceiling.
+        const reported =
+          typeof out.costUSD === "number" && Number.isFinite(out.costUSD) ? out.costUSD : null;
+        if (reported !== null) spent += reported - unitCost;
+
+        const charged = (reported ?? unitCost) + (billedAttempts - 1) * unitCost;
 
         // Record the moment the bytes exist. Cost first, everything else after.
-        spent += charged;
         ledger.append({
           edition: job.edition,
           dna: job.dna,
@@ -170,7 +187,8 @@ async function main() {
           traits: job.traits,
           file: path.relative(basePath, file),
           costUSD: charged,
-          reportedCost: out.costUSD,
+          attempts: billedAttempts,
+          reportedCost: reported,
           provider: providerId,
           model: plan.model,
           at: new Date().toISOString(),
@@ -187,6 +205,20 @@ async function main() {
         }
       } catch (err) {
         failed++;
+        // No image landed, so no edition row — but the attempts were billed
+        // and that money has to survive a resume. A row with no `edition`
+        // counts toward spend without marking anything as done.
+        if (unitCost > 0) {
+          ledger.append({
+            failedEdition: job.edition,
+            costUSD: billedAttempts * unitCost,
+            attempts: billedAttempts,
+            error: redact(err.message),
+            provider: providerId,
+            model: plan.model,
+            at: new Date().toISOString(),
+          });
+        }
         console.error(`    FAILED #${job.edition} — ${redact(err.message)}`);
       }
     },
@@ -208,4 +240,4 @@ async function main() {
   }
 }
 
-main().catch((e) => die(redact(e.stack || e.message)));
+main().catch((e) => fail(e, redact));

@@ -39,7 +39,7 @@ export function Row({ k, v, accent }: { k: string; v: React.ReactNode; accent?: 
 }
 
 export function Button({
-  children, onClick, disabled, tone = "ghost", full, title,
+  children, onClick, disabled, tone = "ghost", full, title, autoFocus,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -47,6 +47,7 @@ export function Button({
   tone?: "ghost" | "solid" | "danger";
   full?: boolean;
   title?: string;
+  autoFocus?: boolean;
 }) {
   const base: React.CSSProperties = {
     fontFamily: "var(--font-mono)",
@@ -68,6 +69,7 @@ export function Button({
   return (
     <button
       title={title}
+      autoFocus={autoFocus}
       onClick={onClick}
       disabled={disabled}
       style={{ ...base, ...tones[tone] }}

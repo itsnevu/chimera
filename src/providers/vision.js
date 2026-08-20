@@ -66,6 +66,9 @@ const verifyTraits = async ({
     // Low temperature: this is a judgement, not a creative task.
     temperature: 0,
     max_tokens: 700,
+    // Required for `usage.cost` to come back at all — QC has no catalogue
+    // price to fall back on, so without this its spend total is stuck at zero.
+    usage: { include: true },
   };
 
   const controller = new AbortController();

@@ -43,6 +43,8 @@ export default function Studio() {
   const [flagged, setFlagged] = useState<Record<number, string[]>>({});
   const [showTraits, setShowTraits] = useState(false);
   const [pending, setPending] = useState<Confirmation | null>(null);
+  const [ship, setShip] = useState<{ editions: number; placeholders: number; pinned: number } | null>(null);
+  const [jwt, setJwt] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   // Seeding the size field is a one-shot: re-seeding on every poll would
   // overwrite whatever the user is in the middle of typing.
@@ -505,6 +507,88 @@ export default function Studio() {
           )}
         </Stage>
 
+        {/* 05 — ship */}
+        <Stage
+          n={5}
+          title="SHIP"
+          state={
+            !ship || !ship.editions ? "idle"
+            : ship.placeholders ? "blocked"
+            : ship.pinned ? "done" : "active"
+          }
+        >
+          {ship && ship.editions > 0 && (
+            <>
+              <Row k="editions" v={num(ship.editions)} />
+              <Row
+                k="placeholders"
+                v={num(ship.placeholders)}
+                accent={ship.placeholders ? "var(--warn)" : "var(--good)"}
+              />
+              <Row k="pinned" v={num(ship.pinned)} />
+            </>
+          )}
+
+          <div style={{ display: "flex", gap: 6, marginTop: ship?.editions ? 12 : 0, flexWrap: "wrap" }}>
+            <Button disabled={busy} onClick={() => post("/api/ship", { action: "doctor" })}>
+              DOCTOR
+            </Button>
+            <Button disabled={busy || !ship?.editions} onClick={() => post("/api/ship", { action: "validate" })}>
+              VALIDATE
+            </Button>
+            <Button disabled={busy || !ship?.editions} onClick={() => post("/api/ship", { action: "publish" })}>
+              PIN · DRY RUN
+            </Button>
+          </div>
+
+          {ship && ship.placeholders > 0 && (
+            <p style={{ marginTop: 10, fontSize: 11.5, color: "var(--warn)", lineHeight: 1.5 }}>
+              {num(ship.placeholders)} editions still carry the placeholder baseUri or
+              description from src/config.js. Fix those before pinning — IPFS is permanent.
+            </p>
+          )}
+
+          {ship && ship.editions > 0 && ship.placeholders === 0 && (
+            <div style={{ marginTop: 12 }}>
+              <input
+                type="password"
+                placeholder="Pinata JWT"
+                value={jwt}
+                onChange={(e) => setJwt(e.target.value)}
+                aria-label="Pinata JWT"
+                className="mono"
+                style={{
+                  width: "100%", background: "var(--pane)", border: "1px solid var(--rule-2)",
+                  color: "var(--ink)", padding: "9px 11px", fontSize: 11, marginBottom: 10,
+                }}
+              />
+              <Button
+                tone="danger"
+                full
+                disabled={busy || !jwt}
+                onClick={() =>
+                  setPending({
+                    title: "Pin this collection to IPFS?",
+                    lines: [
+                      ["editions", num(ship.editions)],
+                      ["already pinned", num(ship.pinned)],
+                      ["to pin", num(ship.editions - ship.pinned)],
+                    ],
+                    body:
+                      "Pinning is public and cannot be undone. Unpinning removes your copy, " +
+                      "not anyone else's — whoever has fetched the CID can keep serving it. " +
+                      "Check a few editions look right first.",
+                    cta: "PIN FOR REAL",
+                    run: () => post("/api/ship", { action: "publish", confirm: true, jwt }),
+                  })
+                }
+              >
+                PIN TO IPFS — PERMANENT
+              </Button>
+            </div>
+          )}
+        </Stage>
+
         {error && (
           <div style={{ padding: 18, borderBottom: "1px solid var(--rule)" }}>
             <p style={{ fontSize: 11.5, color: "var(--warn)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{error}</p>
@@ -583,6 +667,54 @@ export default function Studio() {
           </div>
         )}
       </main>
+
+      {/* Confirmation for anything that spends money or destroys paid work.
+          Rendered last so it sits above the layout without a portal. */}
+      {pending && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-title"
+          tabIndex={-1}
+          // Focus the dialog on mount so Escape works and screen readers land
+          // inside it rather than continuing behind the overlay.
+          ref={(el) => el?.focus()}
+          onKeyDown={(e) => e.key === "Escape" && setPending(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 50, display: "grid", placeItems: "center",
+            background: "rgba(0,0,0,0.72)", padding: 18,
+          }}
+        >
+          <div
+            style={{
+              width: "min(460px, 100%)", background: "var(--pane-2)",
+              border: "1px solid var(--rule-2)", padding: 22,
+            }}
+          >
+            <h2 id="confirm-title" style={{ fontSize: 17, marginBottom: 14 }}>{pending.title}</h2>
+
+            <div style={{ marginBottom: 14 }}>
+              {pending.lines.map(([k, v]) => (
+                <Row key={k} k={k} v={v} accent={k === "this run" ? "var(--ember)" : undefined} />
+              ))}
+            </div>
+
+            <p style={{ fontSize: 12, lineHeight: 1.6, color: "var(--ink-2)", marginBottom: 18 }}>
+              {pending.body}
+            </p>
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <Button onClick={() => setPending(null)}>CANCEL</Button>
+              <Button
+                tone="solid"
+                onClick={() => { const go = pending.run; setPending(null); go(); }}
+              >
+                {pending.cta}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

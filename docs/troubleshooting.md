@@ -152,6 +152,68 @@ progress is in the ledger and survives.
 
 ---
 
+### Files keep appearing with " 2" in the name
+
+`build 2/`, `routes.d 2.ts`, even `.git/index 2`.
+
+**Your repo is inside an iCloud-synced folder.** `~/Documents` and `~/Desktop`
+are synced by default on macOS, and iCloud resolves write conflicts by
+duplicating the file rather than merging it. A build directory that rewrites
+thousands of files, or a git index that changes on every command, produces
+conflicts constantly.
+
+Symptoms: `git add` hanging for minutes on files that should be ignored,
+TypeScript reporting duplicate identifiers from `.next/types/... 2.ts`, and
+stray gigabytes of generated output.
+
+Check:
+
+```sh
+brctl status | head -1        # any output means iCloud is running
+find . -name "* 2" -o -name "* 2.*" | grep -v node_modules
+```
+
+The real fix is to move the repo out of the synced tree:
+
+```sh
+mkdir -p ~/Developer
+mv ~/Documents/chimera ~/Developer/chimera
+```
+
+`.gitignore` carries patterns for the duplicate shape, but that only stops
+them being committed — it does not stop them being created, and a duplicated
+`.git/index` is a genuine corruption risk.
+
+---
+
+### `--max-spend must be a number, got "1,000"`
+
+Numeric flags are validated at the boundary and the run dies rather than
+continuing. That is deliberate: every spend guard is a comparison like
+`spent + unit > maxSpend`, and **every comparison against NaN is false**. A
+ceiling that parsed to NaN is not a loose ceiling, it is no ceiling at all.
+
+The cases that used to slip through:
+
+```sh
+npm run ai:generate -- --max-spend            # value omitted
+npm run ai:generate -- --max-spend $BUDGET    # unset shell variable
+npm run ai:generate -- --max-spend 1,000      # thousands separator
+npm run ai:generate -- --limit --yes          # next flag eaten as the value
+```
+
+---
+
+### `layer "X" has no selectable elements (weights sum to 0)`
+
+A trait folder is empty, or every weight in it is zero.
+
+This throws rather than skipping the layer, because skipping it would drop one
+position from the DNA string and every later layer would decode at the wrong
+index — a whole collection of quietly wrong metadata.
+
+---
+
 ### Metadata says a trait the picture does not have
 
 Expected, and the reason QC exists. Chimera guarantees metadata matches the

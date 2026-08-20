@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "@/lib/engine";
+import { rejectCrossOrigin } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,9 @@ export async function GET() {
  * configuration. Deleting the overrides file restores the original exactly.
  */
 export async function PUT(req: Request) {
+  const blocked = rejectCrossOrigin(req);
+  if (blocked) return blocked;
+
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
     return NextResponse.json({ error: "Expected a JSON object." }, { status: 400 });

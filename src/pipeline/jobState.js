@@ -17,6 +17,20 @@ class Ledger {
   }
 
   open() {
+    // A killed run can leave a half-written final line. Appending straight
+    // onto it would fuse the two records into one unparseable line, so the
+    // completed edition it described would be re-rendered and re-billed on
+    // every subsequent resume. Close the line before writing after it.
+    if (fs.existsSync(this.file)) {
+      const size = fs.statSync(this.file).size;
+      if (size > 0) {
+        const fd = fs.openSync(this.file, "r");
+        const tail = Buffer.alloc(1);
+        fs.readSync(fd, tail, 0, 1, size - 1);
+        fs.closeSync(fd);
+        if (tail[0] !== 0x0a) fs.appendFileSync(this.file, "\n");
+      }
+    }
     this.fd = fs.openSync(this.file, "a");
     return this;
   }
@@ -32,9 +46,12 @@ class Ledger {
       if (!line.trim()) continue;
       try {
         const rec = JSON.parse(line);
+        // Cost is counted before the edition check: a record with no edition
+        // is a spend-only row, written when attempts were billed but nothing
+        // usable came back. That money is real and must survive a resume.
+        spentUSD += rec.costUSD || 0;
         if (rec.edition == null) continue;
         done.set(rec.edition, rec);
-        spentUSD += rec.costUSD || 0;
       } catch {
         torn++; // truncated tail from a hard kill — expected, not fatal
       }

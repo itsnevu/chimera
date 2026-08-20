@@ -82,8 +82,22 @@ const createDna = (_layers) => {
     layer.elements.forEach((element) => {
       totalWeight += element.weight;
     });
-    // number between 0 - totalWeight
-    let random = Math.floor(Math.random() * totalWeight);
+    // A layer whose weights all sum to zero has nothing selectable. Left
+    // alone, the loop below never fires, the layer is silently dropped from
+    // the DNA, and every later layer decodes at the wrong index.
+    if (!(totalWeight > 0)) {
+      throw new Error(
+        `layer "${layer.name || layer.id}" has no selectable elements ` +
+        `(weights sum to ${totalWeight}) — check for an empty folder or zero weights`
+      );
+    }
+
+    // Not floored: flooring quantises the roll to whole numbers, so any
+    // fractional weight is mis-sampled. Two options at weight 0.5 give
+    // totalWeight 1, floor() makes every roll 0, and the first option wins
+    // 100% of the time. The subtract-until-negative loop below is exact on
+    // real numbers, so leave the roll continuous.
+    let random = Math.random() * totalWeight;
     for (var i = 0; i < layer.elements.length; i++) {
       // subtract the current weight from the random weight until we reach a sub zero value.
       random -= layer.elements[i].weight;
