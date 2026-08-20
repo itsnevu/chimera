@@ -223,8 +223,33 @@ combination first — with the same weighted engine layer mode uses — then wri
 the prompt from it. Metadata therefore records what you *asked for*, and rarity
 stays computable.
 
-The full reasoning, including the seven levers that keep 1,000 renders on-model,
-is in [docs/ai-mode-plan.md](docs/ai-mode-plan.md).
+## Documentation
+
+| Document | Covers |
+|---|---|
+| [architecture](docs/architecture.md) | How the pieces fit, and why the render step is split in two |
+| [pipeline](docs/pipeline.md) | Every stage, command by command, with what each costs |
+| [consistency](docs/consistency.md) | The seven levers that keep 1,000 renders on-model |
+| [cost control](docs/cost-control.md) | Every guard between you and a surprise bill |
+| [configuration](docs/configuration.md) | Every option in every config file |
+| [studio](docs/studio.md) | The Next.js UI and its HTTP API |
+| [troubleshooting](docs/troubleshooting.md) | Errors you will actually hit |
+
+## Studio — the UI
+
+```sh
+cd studio && npm install && npm run dev
+```
+
+A Next.js app over the same CLI: upload a reference, approve a master, roll a
+plan, watch a run, inspect any edition's traits and prompt. Every button spawns
+the exact `npm run` you could have typed, so there is no second implementation
+to drift.
+
+Your API key is posted to a server route and held in that process for the run
+only — never written to disk, never returned to the browser, stripped from
+every log line. That is why the studio is a server app rather than a static
+page.
 
 ### Tests
 

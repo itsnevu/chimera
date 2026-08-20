@@ -1,0 +1,59 @@
+/* Chimera Studio — a darkroom console. One accent; every other colour on the
+   page is produced by the collection itself. */
+:root {
+  --void: #08070a;
+  --pane: #0d0c10;
+  --pane-2: #131218;
+  --pane-3: #1a1820;
+  --rule: #1d1b22;
+  --rule-2: #2a272f;
+  --ink: #eae7ed;
+  --ink-2: #9b94a3;
+  --ink-3: #807b8b;      /* WCAG AA against all three grounds */
+  --ember: #ff4d00;
+  --ember-dim: rgba(255, 77, 0, 0.12);
+  --good: #35d6b0;
+  --good-dim: rgba(53, 214, 176, 0.12);
+  --warn: #ffb020;
+  --warn-dim: rgba(255, 176, 32, 0.12);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  margin: 0;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 1.1;
+}
+p { margin: 0; }
+
+.mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+button { font: inherit; color: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: 0.4; }
+:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--void); }
+::-webkit-scrollbar-thumb { background: var(--rule-2); }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
