@@ -15,7 +15,7 @@
   --rule-2:#2A272F;
   --ink:#EAE7ED;
   --ink-2:#8E8896;
-  --ink-3:#5C5765;
+  --ink-3:#807B8B;
   --ember:#FF4D00;
   --ember-dim:rgba(255,77,0,.12);
 }
@@ -68,7 +68,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .slot{
   display:flex;align-items:center;gap:13px;width:100%;text-align:left;
   background:var(--pane);border:1px solid var(--rule-2);padding:11px;
-  transition:border-color .14s,background .14s;
+  transition:border-color .18s,background .18s;
 }
 .slot:hover,.slot.over{border-color:var(--ember);background:var(--ember-dim)}
 .slot figure{
@@ -95,7 +95,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .steps button{
   flex:1;background:none;border:none;border-right:1px solid var(--rule-2);
   padding:7px 0;font-family:"Martian Mono",monospace;font-size:10.5px;color:var(--ink-3);
-  transition:.14s;
+  transition:.18s;
 }
 .steps button:last-child{border-right:none}
 .steps button:hover{color:var(--ink)}
@@ -104,7 +104,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 /* model rows */
 .mdl{
   display:flex;align-items:flex-start;gap:11px;width:100%;text-align:left;background:none;
-  border:none;border-bottom:1px solid var(--rule);padding:10px 0;transition:.14s;
+  border:none;border-bottom:1px solid var(--rule);padding:10px 0;transition:.18s;
 }
 .mdl:last-of-type{border-bottom:none}
 .mdl:hover .mdl-n{color:var(--ink)}
@@ -112,7 +112,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .mdl[aria-pressed=true] i{background:var(--ember);border-color:var(--ember)}
 .mdl[aria-pressed=true] .mdl-n{color:var(--ink)}
 .mdl div{flex:1;min-width:0}
-.mdl-n{display:block;font-size:13px;font-weight:600;color:var(--ink-2);transition:color .14s}
+.mdl-n{display:block;font-size:13px;font-weight:600;color:var(--ink-2);transition:color .18s}
 .mdl-id{display:block;font-family:"Martian Mono",monospace;font-size:9.5px;color:var(--ink-3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .mdl-n s{text-decoration:none;font-family:"Martian Mono",monospace;font-size:8px;
@@ -134,7 +134,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .go{
   width:100%;margin-top:13px;background:var(--ember);border:none;color:var(--void);
   padding:13px;font-family:"Martian Mono",monospace;font-weight:800;font-size:12.5px;
-  letter-spacing:-.02em;transition:filter .14s;
+  letter-spacing:-.02em;transition:filter .18s;
 }
 .go:hover{filter:brightness(1.12)}
 
@@ -147,7 +147,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .sheet-bar .m{font-size:10.5px;color:var(--ink-3)}
 .reroll{
   margin-left:auto;background:none;border:1px solid var(--rule-2);color:var(--ink-2);
-  padding:6px 13px;font-family:"Martian Mono",monospace;font-size:10.5px;transition:.14s;
+  padding:6px 13px;font-family:"Martian Mono",monospace;font-size:10.5px;transition:.18s;
 }
 .reroll:hover{border-color:var(--ember);color:var(--ember)}
 
@@ -157,7 +157,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 }
 .cell{
   aspect-ratio:1;position:relative;border:none;padding:0;background:var(--pane-2);
-  transition:transform .1s,box-shadow .1s;
+  transition:transform .16s,box-shadow .16s;
 }
 .cell:hover{transform:scale(1.42);z-index:5;box-shadow:0 0 0 1px var(--ember),0 6px 18px rgba(0,0,0,.7)}
 .cell[aria-pressed=true]{box-shadow:0 0 0 1.5px var(--ember);z-index:4}
@@ -193,7 +193,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .pr em{font-style:normal;color:var(--ink-3)}
 .cp{
   margin-top:11px;background:none;border:1px solid var(--rule-2);color:var(--ink-2);
-  padding:6px 13px;font-family:"Martian Mono",monospace;font-size:10.5px;transition:.14s;
+  padding:6px 13px;font-family:"Martian Mono",monospace;font-size:10.5px;transition:.18s;
 }
 .cp:hover{border-color:var(--ember);color:var(--ember)}
 
