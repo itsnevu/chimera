@@ -627,6 +627,143 @@ test("a paid run without references is refused, not silently allowed", () => {
   return "empty-array bug cannot return";
 });
 
+
+// ───────────────────────────────────── LSH, validation, publish (round 2) ────
+
+const { validateCollection } = require(`${basePath}/src/core/validateMetadata.js`);
+const pinata = require(`${basePath}/src/publish/pinata.js`);
+
+test("LSH twin search agrees exactly with the exhaustive form", () => {
+  // The prefilter must never drop a real twin. Recall is guaranteed by
+  // pigeonhole: d differing bits spoil at most d of 8 bands, so any pair
+  // within d < 8 still shares one.
+  const mk = (n, f) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: i,
+      hash: { structure: BigInt(f(i)) * 7919n, colour: BigInt(i % 37) * 104729n },
+    }));
+  const norm = (c) => c.map((g) => [...g].sort((a, b) => a - b).join(",")).sort().join("|");
+
+  const cases = [
+    ["periodic", 400, (i) => i % 50],
+    ["scattered", 400, (i) => (i * 2654435761) % 1024],
+    ["dense", 300, (i) => i % 7],
+    ["identical", 150, () => 1],
+  ];
+  cases.forEach(([label, n, f]) => {
+    const e = mk(n, f);
+    assert.strictEqual(
+      norm(phash.findTwins(e, 5)),
+      norm(phash.findTwinsExhaustive(e, 5)),
+      `LSH disagreed with exhaustive on ${label} data`
+    );
+  });
+  return `${cases.length} distributions, identical clustering`;
+});
+
+test("LSH declines the prefilter when it cannot guarantee recall", () => {
+  // Past 8 bits of tolerance the pigeonhole argument fails, so it must fall
+  // back rather than silently miss twins.
+  const e = Array.from({ length: 60 }, (_, i) => ({
+    id: i,
+    hash: { structure: BigInt(i) * 3n, colour: 0n },
+  }));
+  const norm = (c) => c.map((g) => [...g].sort((a, b) => a - b).join(",")).sort().join("|");
+  assert.strictEqual(norm(phash.findTwins(e, 12)), norm(phash.findTwinsExhaustive(e, 12)));
+  return "maxDistance >= bands falls back to exhaustive";
+});
+
+test("validator catches placeholder URIs and descriptions", () => {
+  const { errors } = validateCollection(
+    [{ name: "x #1", description: "Remember to replace this description",
+       image: "ipfs://NewUriToReplace/1.png", edition: 1, attributes: [] }],
+    { network: "eth" }
+  );
+  const problems = errors.map((e) => e.problem).join(" | ");
+  assert.match(problems, /placeholder/i);
+  assert.ok(errors.length >= 2, `expected both placeholders flagged, got: ${problems}`);
+  return "baseUri + description both caught";
+});
+
+test("validator catches duplicate editions, images and DNA", () => {
+  const base = { name: "n", description: "d", image: "ipfs://cid/1.png", edition: 1, dna: "abc", attributes: [] };
+  const { errors } = validateCollection([base, { ...base }], { network: "eth" });
+  const problems = errors.map((e) => e.problem).join(" | ");
+  assert.match(problems, /duplicate edition/);
+  assert.match(problems, /image URI reused/);
+  assert.match(problems, /duplicate DNA/);
+  return "edition, image and DNA collisions all flagged";
+});
+
+test("validator catches editions with different trait sets", () => {
+  const mk = (edition, attributes) => ({
+    name: "n", description: "d", image: `ipfs://cid/${edition}.png`, edition, attributes,
+  });
+  const { errors } = validateCollection(
+    [
+      mk(1, [{ trait_type: "Fur", value: "Calico" }, { trait_type: "Eyes", value: "Amber" }]),
+      mk(2, [{ trait_type: "Fur", value: "Tuxedo" }]),
+    ],
+    { network: "eth" }
+  );
+  assert.match(errors.map((e) => e.problem).join(" | "), /same trait set/);
+  return "a missing trait_type on one edition is an error";
+});
+
+test("validator passes a clean collection", () => {
+  const attrs = [{ trait_type: "Fur", value: "Calico" }];
+  const clean = [1, 2, 3].map((n) => ({
+    name: `Cat #${n}`, description: "A real description",
+    image: `ipfs://bafyrealcid/${n}.png`, edition: n, dna: `dna${n}`, attributes: attrs,
+  }));
+  const { errors } = validateCollection(clean, { network: "eth", traitNames: ["Fur"] });
+  assert.deepStrictEqual(errors, [], errors.map((e) => e.problem).join("; "));
+  return "no false positives";
+});
+
+test("validator understands the solana shape", () => {
+  const sol = [{
+    name: "Cat #1", symbol: "CAT", description: "d", image: "1.png",
+    edition: 1, attributes: [{ trait_type: "Fur", value: "Calico" }],
+    properties: { files: [{ uri: "1.png", type: "image/png" }], category: "image", creators: [] },
+  }];
+  const { errors } = validateCollection(sol, { network: "sol" });
+  assert.deepStrictEqual(errors, [], errors.map((e) => e.problem).join("; "));
+  const broken = validateCollection([{ ...sol[0], properties: { files: [] } }], { network: "sol" });
+  assert.match(broken.errors.map((e) => e.problem).join(" | "), /files must be a non-empty array/);
+  return "valid sol passes, empty files array fails";
+});
+
+test("trait weight overrides apply without touching the source", () => {
+  const fsMod = require("fs");
+  const overridePath = `${basePath}/chimera.overrides.json`;
+  const existed = fsMod.existsSync(overridePath);
+  const backup = existed ? fsMod.readFileSync(overridePath, "utf8") : null;
+  try {
+    fsMod.writeFileSync(overridePath, JSON.stringify({ Fur: { Siamese: 99 } }));
+    delete require.cache[require.resolve(`${basePath}/chimera.traits.js`)];
+    const overridden = require(`${basePath}/chimera.traits.js`);
+    const fur = overridden.traits.find((t) => t.name === "Fur");
+    assert.strictEqual(fur.options.find((o) => o.value === "Siamese").weight, 99);
+    // Everything else must be untouched.
+    assert.strictEqual(fur.options.find((o) => o.value === "Calico").weight, 18);
+    assert.strictEqual(overridden.hasOverrides, true);
+  } finally {
+    if (backup === null) fsMod.unlinkSync(overridePath);
+    else fsMod.writeFileSync(overridePath, backup);
+    delete require.cache[require.resolve(`${basePath}/chimera.traits.js`)];
+  }
+  return "one weight changed, the rest identical";
+});
+
+test("pinata adapter refuses to invent a CID", async () => {
+  await assert.rejects(
+    pinata.uploadFile({ buffer: Buffer.from("x"), name: "x.png", jwt: null }),
+    /missing Pinata JWT/
+  );
+  return "no JWT throws before any request";
+});
+
 // ───────────────────────────────────────────────────────────────── report ────
 
 (async () => {

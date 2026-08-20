@@ -132,11 +132,101 @@ const isFlat = async (pathOrBuffer, threshold = 4) => {
 /**
  * Group near-identical images.
  *
- * @param {Array} entries  [{ id, hash: BigInt }]
+ * The naive form compares every pair: 1,000 images is 500k comparisons, which
+ * is fine, but 10,000 is 50 million and QC hangs for minutes. So candidates
+ * are narrowed first by locality-sensitive hashing — the structural hash is
+ * cut into bands, and only images sharing a band are compared in full.
+ *
+ * Two images within a few bits of each other are overwhelmingly likely to
+ * agree on at least one band, so this keeps the pairs that matter while
+ * discarding the vast majority that cannot possibly be twins.
+ *
+ * @param {Array} entries  [{ id, hash }]
  * @param {Number} maxDistance  bits of difference still considered a twin
  * @returns {Array<Array>} clusters of 2+ ids
  */
+const BANDS = 8;      // 64-bit structural hash -> 8 bands of 8 bits
+const BAND_BITS = 8n;
+const BAND_MASK = 0xffn;
+
+const bandKeys = (hash) => {
+  const structure = typeof hash === "bigint" ? hash : hash.structure;
+  const keys = [];
+  for (let b = 0; b < BANDS; b++) {
+    keys.push(`${b}:${(structure >> (BigInt(b) * BAND_BITS)) & BAND_MASK}`);
+  }
+  return keys;
+};
+
 const findTwins = (entries, maxDistance = 5) => {
+  const n = entries.length;
+  const exhaustiveWork = (n * (n - 1)) / 2;
+
+  // The recall guarantee is pigeonhole: d differing bits can spoil at most d
+  // of the BANDS bands, so any pair within d < BANDS bits must still agree on
+  // at least one band. Past that the prefilter would start dropping real
+  // twins, so don't use it.
+  if (maxDistance >= BANDS) return findTwinsExhaustive(entries, maxDistance);
+
+  const buckets = new Map();
+  entries.forEach((entry, index) => {
+    bandKeys(entry.hash).forEach((key) => {
+      let bucket = buckets.get(key);
+      if (!bucket) buckets.set(key, (bucket = []));
+      bucket.push(index);
+    });
+  });
+
+  // Degenerate hashes (a whole band identical across the collection) make the
+  // prefilter no cheaper than comparing everything. Skipping those buckets
+  // would break the guarantee above, so fall back honestly instead.
+  let work = 0;
+  for (const members of buckets.values()) {
+    work += (members.length * (members.length - 1)) / 2;
+    if (work >= exhaustiveWork) return findTwinsExhaustive(entries, maxDistance);
+  }
+
+  const candidates = new Map(); // index -> Set(index)
+  const link = (a, b) => {
+    let set = candidates.get(a);
+    if (!set) candidates.set(a, (set = new Set()));
+    set.add(b);
+  };
+  buckets.forEach((members) => {
+    for (let i = 0; i < members.length; i++) {
+      for (let j = i + 1; j < members.length; j++) {
+        link(members[i], members[j]);
+        link(members[j], members[i]);
+      }
+    }
+  });
+
+  const seen = new Set();
+  const clusters = [];
+  for (let i = 0; i < n; i++) {
+    if (seen.has(i)) continue;
+    const group = [entries[i].id];
+    // Ascending, so grouping is deterministic and matches the exhaustive form
+    // exactly. Set iteration order would partition the same relation
+    // differently from run to run.
+    const near = [...(candidates.get(i) || [])].sort((a, b) => a - b);
+    for (const j of near) {
+      if (j <= i || seen.has(j)) continue;
+      if (distance(entries[i].hash, entries[j].hash) <= maxDistance) {
+        group.push(entries[j].id);
+        seen.add(j);
+      }
+    }
+    if (group.length > 1) {
+      seen.add(i);
+      clusters.push(group);
+    }
+  }
+  return clusters;
+};
+
+/** The exhaustive form, kept so tests can prove the fast path agrees with it. */
+const findTwinsExhaustive = (entries, maxDistance = 5) => {
   const seen = new Set();
   const clusters = [];
   for (let i = 0; i < entries.length; i++) {
@@ -157,4 +247,7 @@ const findTwins = (entries, maxDistance = 5) => {
   return clusters;
 };
 
-module.exports = { hashImage, structureHash, colourHash, distance, isFlat, findTwins };
+module.exports = {
+  hashImage, structureHash, colourHash, distance, isFlat,
+  findTwins, findTwinsExhaustive,
+};

@@ -9,7 +9,13 @@ export async function GET() {
     verified: number;
     failures: { edition: number; reasons: string[] }[];
   }>("qc.json");
-  return NextResponse.json(qc ?? { checked: 0, verified: 0, failures: [] });
+  if (!qc) return NextResponse.json({ checked: 0, verified: 0, failures: [], flagged: {} });
+
+  // Keyed by edition so the proof sheet can mark cells without scanning an
+  // array per cell.
+  const flagged: Record<number, string[]> = {};
+  qc.failures.forEach((f) => { flagged[f.edition] = f.reasons; });
+  return NextResponse.json({ ...qc, flagged });
 }
 
 export async function POST(req: Request) {

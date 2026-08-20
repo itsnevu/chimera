@@ -152,3 +152,11 @@ reference.png
 studio/node_modules/
 studio/.next/
 studio/next-env.d.ts
+
+# studio-managed weight overrides
+chimera.overrides.json
+
+# macOS duplicates of generated output ("build 2", "images 2", ...)
+build [0-9]*/
+*/*[0-9]/
+**/* [0-9]/

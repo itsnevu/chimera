@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Label, Row, Stage, money, num } from "./components/ui";
+import { ProofSheet, type Edition } from "./components/ProofSheet";
+import { Progress } from "./components/Progress";
+import { TraitEditor } from "./components/TraitEditor";
 
 type Status = {
   config: {
@@ -17,7 +20,14 @@ type Status = {
   run: { running: boolean; script: string | null; log: string[]; exitCode: number | null };
 };
 
-type Edition = { edition: number; traits: Record<string, string>; prompt: string; seed: number };
+/** A destructive or paid action, held until the user explicitly acknowledges it. */
+type Confirmation = {
+  title: string;
+  lines: [string, string][];
+  body: string;
+  cta: string;
+  run: () => void;
+};
 
 const POLL_IDLE = 2500;
 const POLL_ACTIVE = 700;
@@ -30,18 +40,36 @@ export default function Studio() {
   const [size, setSize] = useState<number | "">("");
   const [error, setError] = useState<string | null>(null);
   const [mock, setMock] = useState(true);
+  const [flagged, setFlagged] = useState<Record<number, string[]>>({});
+  const [showTraits, setShowTraits] = useState(false);
+  const [pending, setPending] = useState<Confirmation | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  // Seeding the size field is a one-shot: re-seeding on every poll would
+  // overwrite whatever the user is in the middle of typing.
+  const sizeSeeded = useRef(false);
+  // Status requests overlap (interval + post + upload), so an older response
+  // must never be allowed to land on top of a newer one.
+  const statusSeq = useRef(0);
 
   const refresh = useCallback(async () => {
+    const seq = ++statusSeq.current;
     try {
       const r = await fetch("/api/status", { cache: "no-store" });
+      if (!r.ok) {
+        if (seq === statusSeq.current) setError(`Engine status unavailable (${r.status})`);
+        return;
+      }
       const s: Status = await r.json();
+      if (seq !== statusSeq.current) return; // a newer request already answered
       setStatus(s);
-      if (size === "") setSize(s.config.editionSize);
+      if (!sizeSeeded.current) {
+        sizeSeeded.current = true;
+        setSize(s.config.editionSize);
+      }
     } catch {
-      setError("Cannot reach the engine. Is the dev server still running?");
+      if (seq === statusSeq.current) setError("Cannot reach the engine. Is the dev server still running?");
     }
-  }, [size]);
+  }, []);
 
   // Poll faster while something is running; idle polling stays cheap.
   useEffect(() => {
@@ -53,33 +81,53 @@ export default function Studio() {
   // Pull the rolled collection once a plan exists, and again after each run.
   useEffect(() => {
     if (!status?.plan) return;
-    fetch("/api/plan", { cache: "no-store" })
-      .then((r) => r.json())
+    const ac = new AbortController();
+    fetch("/api/plan", { cache: "no-store", signal: ac.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`plan unavailable (${r.status})`);
+        return r.json();
+      })
       .then((d) => setEditions(d.editions ?? []))
-      .catch(() => {});
-  }, [status?.plan?.editionSize, status?.run.exitCode]);
+      .catch((e: Error) => {
+        // Swallowing this would render a fully-planned collection as the
+        // "nothing rolled yet" empty state, inviting a destructive re-roll.
+        if (e.name !== "AbortError") setError("Could not load the rolled collection — it may still exist on disk.");
+      });
+    return () => ac.abort();
+  }, [status?.plan, status?.run.exitCode]);
 
+  // Keyed on the last line, not the count: the engine caps the buffer at 400
+  // lines, so length stops changing exactly when the run gets interesting.
+  const lastLogLine = status?.run.log[status.run.log.length - 1];
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [status?.run.log.length]);
+  }, [lastLogLine]);
 
   const post = async (url: string, body: unknown) => {
     setError(null);
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) setError((await r.json().catch(() => ({}))).error ?? `Request failed (${r.status})`);
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) setError((await r.json().catch(() => ({}))).error ?? `Request failed (${r.status})`);
+    } catch (e) {
+      setError(`Could not reach the engine: ${(e as Error).message}`);
+    }
     refresh();
   };
 
   const upload = async (file: File) => {
     setError(null);
-    const fd = new FormData();
-    fd.append("file", file);
-    const r = await fetch("/api/reference", { method: "POST", body: fd });
-    if (!r.ok) setError((await r.json().catch(() => ({}))).error ?? "Upload failed");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/reference", { method: "POST", body: fd });
+      if (!r.ok) setError((await r.json().catch(() => ({}))).error ?? "Upload failed");
+    } catch (e) {
+      setError(`Upload failed: ${(e as Error).message}`);
+    }
     refresh();
   };
 
@@ -101,6 +149,88 @@ export default function Studio() {
   const remaining = Math.max(0, (plan?.editionSize ?? 0) - status.rendered);
   const projected = paid ? remaining * unit : 0;
   const overCeiling = status.spentUSD + projected > config.maxSpendUSD;
+
+  const blockedReason = !plan
+    ? "Roll a collection first — that step is free and offline."
+    : remaining === 0
+      ? "Every planned edition is already rendered."
+      : paid && !apiKey
+        ? "Paid mode needs an OpenRouter API key."
+        : paid && !reference.approved
+          ? "Approve a master reference first, so every edition is rendered against it."
+          : paid && overCeiling
+            ? "This run would pass your spend ceiling."
+            : null;
+
+  const smokeCount = Math.min(5, remaining);
+  const smokeCost = paid ? smokeCount * unit : 0;
+  const qcUnit = plan?.usdPerImage ?? 0;
+  const qcCost = status.rendered * qcUnit;
+
+  // Nothing that costs money or destroys work may be dispatched straight from a
+  // click. `confirm: true` is only ever produced inside one of these callbacks,
+  // which run after the user has seen the totals and acknowledged them.
+  const confirmPaidRun = (limit?: number) => {
+    const count = limit ?? remaining;
+    const cost = paid ? count * unit : 0;
+    const send = () => post("/api/generate", { provider, apiKey, ...(limit ? { limit } : {}), confirm: true });
+    if (!paid) return send();
+    setPending({
+      title: limit ? "Spend real money on a smoke test?" : "Spend real money on this run?",
+      lines: [
+        ["editions", num(count)],
+        ["model", plan?.model.split("/").pop() ?? "—"],
+        ["per image", `$${unit.toFixed(3)}`],
+        ["this run", money(cost)],
+        ["already spent", money(status.spentUSD)],
+        ["ceiling", money(config.maxSpendUSD)],
+      ],
+      body:
+        "Billing starts immediately and each rendered image is charged whether or not you keep it. " +
+        "You can stop the run, but you cannot refund what it has already spent.",
+      cta: `SPEND ${money(cost)}`,
+      run: send,
+    });
+  };
+
+  const confirmReroll = () => {
+    const send = () => post("/api/plan", { size });
+    // Re-rolling rewrites the only mapping from edition number to traits, so
+    // any edition already paid for would end up describing art it isn't.
+    if (status.rendered === 0) return send();
+    setPending({
+      title: "Re-roll and invalidate paid renders?",
+      lines: [
+        ["already rendered", num(status.rendered)],
+        ["already spent", money(status.spentUSD)],
+        ["new edition size", num(typeof size === "number" ? size : config.editionSize)],
+      ],
+      body:
+        `Re-rolling assigns new traits and prompts to every edition number. The ${num(status.rendered)} ` +
+        `image${status.rendered === 1 ? "" : "s"} you have already paid for would stay on disk but would no ` +
+        "longer match their metadata. This cannot be undone.",
+      cta: "RE-ROLL ANYWAY",
+      run: send,
+    });
+  };
+
+  const confirmVerify = () => {
+    setPending({
+      title: "Spend real money on trait verification?",
+      lines: [
+        ["images to check", num(status.rendered)],
+        ["per image", `~$${qcUnit.toFixed(3)}`],
+        ["this run", `~${money(qcCost)}`],
+        ["already spent", money(status.spentUSD)],
+        ["ceiling", money(config.maxSpendUSD)],
+      ],
+      body:
+        "Every rendered image is sent to a vision model, one paid call each. The estimate assumes one " +
+        "call per image; retries on unparseable answers cost extra.",
+      cta: `SPEND ~${money(qcCost)}`,
+      run: () => post("/api/qc", { verify: true, apiKey, confirm: true }),
+    });
+  };
 
   const stage = (want: string): "done" | "active" | "blocked" | "idle" => {
     if (want === "ref") {
@@ -206,10 +336,16 @@ export default function Studio() {
             <span style={{ fontSize: 11.5, color: "var(--ink-3)", whiteSpace: "nowrap" }}>editions</span>
           </div>
           <div style={{ marginTop: 12 }}>
-            <Button full disabled={busy} onClick={() => post("/api/plan", { size })}>
+            <Button full disabled={busy} onClick={confirmReroll}>
               {plan ? "RE-ROLL COLLECTION" : "ROLL COLLECTION"}
             </Button>
           </div>
+          {plan && status.rendered > 0 && (
+            <p style={{ marginTop: 9, fontSize: 11.5, color: "var(--warn)", lineHeight: 1.5 }}>
+              Re-rolling reassigns traits to every edition number — the {num(status.rendered)} image
+              {status.rendered === 1 ? "" : "s"} you have already paid for would no longer match their metadata.
+            </p>
+          )}
           {plan && (
             <div style={{ marginTop: 12 }}>
               <Row k="model" v={plan.model.split("/").pop() ?? plan.model} />
@@ -217,6 +353,21 @@ export default function Studio() {
               <Row k="estimate" v={money(plan.estimatedUSD)} accent="var(--ember)" />
             </div>
           )}
+
+          <div style={{ marginTop: 12, borderTop: "1px solid var(--rule)", paddingTop: 12 }}>
+            <button
+              onClick={() => setShowTraits((v) => !v)}
+              className="mono"
+              style={{ background: "none", border: "none", padding: 0, fontSize: 10, letterSpacing: "0.06em", color: "var(--ink-3)" }}
+            >
+              {showTraits ? "− HIDE TRAIT WEIGHTS" : "+ EDIT TRAIT WEIGHTS"}
+            </button>
+            {showTraits && (
+              <div style={{ marginTop: 10 }}>
+                <TraitEditor disabled={busy} onSaved={refresh} />
+              </div>
+            )}
+          </div>
         </Stage>
 
         {/* 03 — generate */}
@@ -272,18 +423,36 @@ export default function Studio() {
             <Button
               tone="solid"
               disabled={busy || !plan || (paid && (!apiKey || overCeiling || !reference.approved)) || remaining === 0}
-              onClick={() => post("/api/generate", { provider, apiKey, confirm: paid })}
-              title={paid && !reference.approved ? "Approve a master reference first" : undefined}
+              onClick={() => confirmPaidRun()}
             >
               {status.rendered > 0 && remaining > 0 ? `RESUME · ${num(remaining)}` : `RUN · ${num(remaining)}`}
             </Button>
             <Button
-              disabled={busy || !plan || (paid && !apiKey)}
-              onClick={() => post("/api/generate", { provider, apiKey, limit: 5, confirm: paid })}
+              // Smoke spends real money too, so it carries the same gates as RUN.
+              disabled={busy || !plan || smokeCount === 0 || (paid && (!apiKey || !reference.approved || status.spentUSD + smokeCost > config.maxSpendUSD))}
+              onClick={() => confirmPaidRun(smokeCount)}
             >
-              SMOKE · 5
+              {paid ? `SMOKE · ${smokeCount} · ${money(smokeCost)}` : `SMOKE · ${smokeCount}`}
             </Button>
           </div>
+
+          {/* The reason an action is blocked must be readable without hovering a
+              disabled control, which is not focusable and has no tooltip on touch. */}
+          {blockedReason && (
+            <p style={{ marginTop: 10, fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.5 }}>{blockedReason}</p>
+          )}
+
+          {plan && (
+            <div style={{ margin: "12px -18px 0" }}>
+              <Progress
+                done={status.rendered}
+                total={plan.editionSize}
+                spent={status.spentUSD}
+                ceiling={config.maxSpendUSD}
+                running={busy}
+              />
+            </div>
+          )}
 
           {paid && overCeiling && (
             <p style={{ marginTop: 10, fontSize: 11.5, color: "var(--warn)", lineHeight: 1.5 }}>
@@ -310,6 +479,12 @@ export default function Studio() {
                 v={num(status.qc.flagged)}
                 accent={status.qc.flagged ? "var(--warn)" : "var(--good)"}
               />
+              {status.qc.flagged > 0 && (
+                <p style={{ marginTop: 8, fontSize: 11, color: "var(--ink-3)", lineHeight: 1.5 }}>
+                  Flagged editions carry an amber corner in the proof sheet. Hover one for
+                  the reason.
+                </p>
+              )}
             </>
           )}
           <div style={{ display: "flex", gap: 6, marginTop: status.qc ? 12 : 0, flexWrap: "wrap" }}>
@@ -318,12 +493,16 @@ export default function Studio() {
             </Button>
             <Button
               disabled={busy || status.rendered === 0 || !apiKey}
-              onClick={() => post("/api/qc", { verify: true, apiKey })}
-              title={!apiKey ? "Trait verification needs an API key" : undefined}
+              onClick={confirmVerify}
             >
-              VERIFY TRAITS · PAID
+              {`VERIFY TRAITS · ~${money(qcCost)}`}
             </Button>
           </div>
+          {status.rendered > 0 && !apiKey && (
+            <p style={{ marginTop: 10, fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.5 }}>
+              Trait verification needs an OpenRouter API key — enter it in step 03.
+            </p>
+          )}
         </Stage>
 
         {error && (
@@ -352,38 +531,13 @@ export default function Studio() {
             Nothing rolled yet. Plan a collection to see it here — that step is free and offline.
           </p>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(56px,1fr))", gap: 3, padding: 18 }}>
-            {editions.slice(0, 600).map((e) => {
-              const done = e.edition <= status.rendered;
-              return (
-                <button
-                  key={e.edition}
-                  onClick={() => setSelected(e.edition)}
-                  title={`#${e.edition}`}
-                  style={{
-                    aspectRatio: "1", border: selected === e.edition ? "1.5px solid var(--ember)" : "1px solid var(--rule)",
-                    background: "var(--pane-2)", padding: 0, overflow: "hidden", position: "relative",
-                  }}
-                >
-                  {done ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={`/api/image/${e.edition}`} alt={`Edition ${e.edition}`} loading="lazy"
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                  ) : (
-                    <span className="mono" style={{ fontSize: 8, color: "var(--ink-3)", position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
-                      {e.edition}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {editions.length > 600 && (
-          <p className="mono" style={{ padding: "0 18px 18px", fontSize: 10, color: "var(--ink-3)" }}>
-            Showing the first 600 of {num(editions.length)} — the grid caps here for performance.
-          </p>
+          <ProofSheet
+            editions={editions}
+            rendered={status.rendered}
+            flagged={flagged}
+            selected={selected}
+            onSelect={setSelected}
+          />
         )}
 
         {/* inspector */}

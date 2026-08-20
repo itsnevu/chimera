@@ -11,7 +11,34 @@
  * `prompt` is what the model actually reads. Keep it concrete and visual.
  * `value` is what lands in the metadata, so keep it human and title-cased.
  */
-module.exports = {
+const fs = require("fs");
+const path = require("path");
+
+/**
+ * Weight overrides, if any.
+ *
+ * Chimera Studio edits weights through this file rather than rewriting the one
+ * you are reading. Your comments, structure and prompt wording are never
+ * touched by a tool, and deleting the overrides file restores exactly what you
+ * wrote here.
+ *
+ * Shape: { "Trait name": { "Value": weight } }
+ */
+const OVERRIDES = path.join(__dirname, "chimera.overrides.json");
+const overrides = fs.existsSync(OVERRIDES)
+  ? JSON.parse(fs.readFileSync(OVERRIDES, "utf8"))
+  : {};
+
+const applyOverrides = (traits) =>
+  traits.map((trait) => ({
+    ...trait,
+    options: trait.options.map((option) => {
+      const w = overrides[trait.name]?.[option.value];
+      return Number.isFinite(w) && w > 0 ? { ...option, weight: w } : option;
+    }),
+  }));
+
+const config = {
   /** Appended to every prompt, unchanged, for all N editions. Consistency
    *  lives or dies here — do not vary it per edition. */
   styleAnchor:
@@ -128,3 +155,8 @@ module.exports = {
     { when: { Headwear: "Crown" },    forbid: { Outfit: ["Hoodie", "Bomber"] } },
   ],
 };
+
+config.traits = applyOverrides(config.traits);
+config.hasOverrides = Object.keys(overrides).length > 0;
+
+module.exports = config;

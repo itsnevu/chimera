@@ -8,6 +8,7 @@
 | [cost-control.md](cost-control.md) | Every guard standing between you and a surprise bill |
 | [configuration.md](configuration.md) | Every option in every config file |
 | [studio.md](studio.md) | The Next.js UI and its HTTP API |
+| [publishing.md](publishing.md) | Validation, IPFS pinning, and why LoRA is not here |
 | [troubleshooting.md](troubleshooting.md) | Errors you will actually hit, and what they mean |
 | [ai-mode-plan.md](ai-mode-plan.md) | The original design document |
 

@@ -35,8 +35,6 @@ if (!flagged.size) { console.log("\n  Nothing flagged. Nothing to do.\n"); proce
 const { done } = new Ledger(LEDGER).read();
 const keep = [...done.values()].filter((r) => !flagged.has(r.edition));
 const drop = [...done.values()].filter((r) => flagged.has(r.edition));
-const cost = drop.length * (ai.editionSize ? 0 : 0); // priced from the plan below
-
 const plan = JSON.parse(fs.readFileSync(`${AI_DIR}/plan.json`, "utf8"));
 const reRenderCost = drop.length * plan.usdPerImage;
 

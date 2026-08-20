@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    name: Engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit and statistical tests
+        run: npm test
+
+      # Layer mode must keep working — the AI pipeline reuses its engine, so a
+      # regression here means both renderers are wrong.
+      - name: Layer mode renders
+        run: |
+          npm run build
+          node -e "
+            const m = require('./build/json/_metadata.json');
+            if (m.length !== 5) throw new Error('expected 5 editions, got ' + m.length);
+            if (new Set(m.map(x => x.dna)).size !== m.length) throw new Error('duplicate DNA');
+            console.log('layer mode: ' + m.length + ' editions, all unique');
+          "
+
+      - run: npm run rarity
+
+      # The whole paid pipeline, for free. If this passes, the only untested
+      # surface left is the provider's own HTTP response.
+      - name: AI pipeline end to end (mock provider)
+        run: |
+          rm -rf build
+          npm run ai:plan -- --size 120
+          npm run ai:generate -- --provider mock
+          npm run ai:qc
+          npm run ai:finalize
+          node -e "
+            const m = require('./build/json/_metadata.json');
+            if (m.length !== 120) throw new Error('expected 120 editions, got ' + m.length);
+            if (new Set(m.map(x => x.dna)).size !== m.length) throw new Error('duplicate DNA');
+            const traits = m[0].attributes.map(a => a.trait_type).join(',');
+            m.forEach(e => {
+              const t = e.attributes.map(a => a.trait_type).join(',');
+              if (t !== traits) throw new Error('edition ' + e.edition + ' has a different trait set');
+            });
+            console.log('ai mode: ' + m.length + ' editions, uniform traits, all unique');
+          "
+
+      - name: Resume must not re-bill
+        run: |
+          BEFORE=$(wc -l < build/ai/ledger.jsonl)
+          npm run ai:generate -- --provider mock
+          AFTER=$(wc -l < build/ai/ledger.jsonl)
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "ledger grew from $BEFORE to $AFTER on a re-run — work was repeated"
+            exit 1
+          fi
+          echo "re-run added nothing: $AFTER entries"
+
+      - name: Guard must refuse to wipe paid work
+        run: |
+          if npm run build 2>&1 | grep -q "Refusing to clear"; then
+            echo "guard held"
+          else
+            echo "build wiped a directory containing an AI ledger"
+            exit 1
+          fi
+
+  studio:
+    name: Studio
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: npm ci
+        working-directory: studio
+      - run: npx tsc --noEmit
+        working-directory: studio
+      - run: npm run build
+        working-directory: studio
