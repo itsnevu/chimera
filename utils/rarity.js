@@ -144,4 +144,17 @@ if (unexpected.size) {
 
 console.log(`${"─".repeat(62)}`);
 console.log(`  worst drift ${worstDrift.toFixed(2)} points`);
-console.log(`  Drift is sampling variance — it shrinks as the edition count grows.\n`);
+
+// What that number means depends entirely on how the collection was rolled.
+const plan = fs.existsSync(PLAN) ? JSON.parse(fs.readFileSync(PLAN, "utf8")) : null;
+if (plan && plan.rollMode === "urn") {
+  console.log(`  Rolled with exact counts, so any residual is integer rounding —`);
+  console.log(`  a weight that does not divide ${editionSize} cannot land exactly.\n`);
+} else if (plan) {
+  console.log(`  Rolled independently. Part of this is sampling variance, which`);
+  console.log(`  shrinks with edition count — but every trait named by a constraint`);
+  console.log(`  is also systematically short, and that part does not shrink.`);
+  console.log(`  Set rollMode: "urn" in src/ai.config.js for exact counts.\n`);
+} else {
+  console.log(`  Drift shrinks as the edition count grows.\n`);
+}

@@ -1002,6 +1002,126 @@ test("writeAtomic never leaves a partial file", () => {
   return "creates dirs, cleans up tmp";
 });
 
+
+// ───────────────────────────────────────────── exact-count rolling (urn) ────
+
+const urn = require(`${basePath}/src/core/urn.js`);
+const { offendingTraits } = require(`${basePath}/src/core/constraints.js`);
+
+test("largest-remainder allocation sums exactly and tracks the weights", () => {
+  const counts = urn.allocate([25, 20, 18, 15, 12, 6, 4], 1000);
+  assert.strictEqual(counts.reduce((a, c) => a + c, 0), 1000, "counts must sum to the total");
+  assert.deepStrictEqual(counts, [250, 200, 180, 150, 120, 60, 40]);
+  // A total that does not divide cleanly still sums exactly.
+  const awkward = urn.allocate([1, 1, 1], 100);
+  assert.strictEqual(awkward.reduce((a, c) => a + c, 0), 100);
+  assert.ok(Math.max(...awkward) - Math.min(...awkward) <= 1, "remainder spread unevenly");
+  return "1000 over 7 weights lands exactly; 100 over 3 splits 34/33/33";
+});
+
+test("count: N pins an exact number of editions", () => {
+  // This is how a 1/1 is expressed: not a very small weight, an exact count.
+  const pinned = [{
+    name: "T", elements: [
+      { id: 0, name: "Genesis", filename: "a#1.txt", weight: 1, count: 1 },
+      { id: 1, name: "Common",  filename: "b#99.txt", weight: 99 },
+    ],
+  }];
+  const col = urn.buildColumns(pinned, 1000);
+  assert.strictEqual(col[0].filter((x) => x === 0).length, 1, "the 1/1 was not exactly 1");
+  assert.strictEqual(col[0].filter((x) => x === 1).length, 999);
+  return "1 of 1000, guaranteed";
+});
+
+test("pinning more than the edition size is refused", () => {
+  const over = [{
+    name: "T", elements: [{ id: 0, name: "A", filename: "a#1.txt", weight: 1, count: 50 }],
+  }];
+  assert.throws(() => urn.buildColumns(over, 10), /more than the 10 editions/);
+  return "50 pinned into 10 editions throws";
+});
+
+test("urn drift is zero where independent rolling is systematically biased", () => {
+  // Rejection sampling discards whole tuples, so every trait a constraint
+  // names comes up short. Measured over 400k accepted rolls of this config,
+  // Crown ships 3.24% against a declared 4.00% — 24 standard errors, not
+  // variance. The urn decides counts before dealing, so it cannot drift.
+  const N = 1000;
+  const result = urn.roll(layers, N, {
+    isValid: (picked) => check(picked, rules) === null,
+    keyOf: (row) => row.join("-"),
+    offenders: (picked) => offendingTraits(picked, rules),
+  });
+
+  let worst = 0;
+  layers.forEach((layer, c) => {
+    const total = layer.elements.reduce((a, e) => a + e.weight, 0);
+    layer.elements.forEach((el, i) => {
+      const share = result.rows.filter((r) => r[c] === i).length / N * 100;
+      worst = Math.max(worst, Math.abs(share - (el.weight / total) * 100));
+    });
+  });
+  assert.ok(worst < 0.11, `urn drifted ${worst.toFixed(3)} points; only integer rounding is allowed`);
+  return `worst drift ${worst.toFixed(3)} points over ${N} editions`;
+});
+
+test("urn output never violates a constraint and never repeats", () => {
+  const N = 800;
+  const { rows } = urn.roll(layers, N, {
+    isValid: (picked) => check(picked, rules) === null,
+    keyOf: (row) => row.join("-"),
+    offenders: (picked) => offendingTraits(picked, rules),
+  });
+
+  const seen = new Set();
+  rows.forEach((row) => {
+    const picked = layers.reduce((acc, l, c) => {
+      acc[l.name] = l.elements[row[c]].name;
+      return acc;
+    }, {});
+    assert.strictEqual(check(picked, rules), null, `shipped a violation: ${JSON.stringify(picked)}`);
+    seen.add(row.join("-"));
+  });
+  assert.strictEqual(seen.size, N, "duplicate combinations survived repair");
+  return `${N} editions, 0 violations, 0 duplicates`;
+});
+
+test("an unsatisfiable urn throws rather than shipping a violation", () => {
+  // Two traits, two values each, and a rule that forbids three of the four
+  // combinations. Exact counts cannot satisfy it.
+  const tight = [
+    { name: "A", elements: [
+      { id: 0, name: "a1", filename: "a1#1.txt", weight: 1 },
+      { id: 1, name: "a2", filename: "a2#1.txt", weight: 1 }] },
+    { name: "B", elements: [
+      { id: 0, name: "b1", filename: "b1#1.txt", weight: 1 },
+      { id: 1, name: "b2", filename: "b2#1.txt", weight: 1 }] },
+  ];
+  const impossible = [
+    { when: { A: "a1" }, forbid: { B: ["b1", "b2"] } },
+  ];
+  assert.throws(
+    () => urn.roll(tight, 100, {
+      isValid: (p) => check(p, impossible) === null,
+      keyOf: (r) => r.join("-"),
+      offenders: (p) => offendingTraits(p, impossible),
+      maxDeals: 2,
+    }),
+    /could not place/
+  );
+  return "throws with an explanation instead of returning a bad plan";
+});
+
+test("offendingTraits names only the traits a violated rule mentions", () => {
+  // Repair searches these columns first. Naming the wrong ones turns a
+  // targeted fix into a full sweep, which is what made 20,000 editions hang.
+  const guilty = offendingTraits({ Headwear: "Crown", Outfit: "Hoodie", Eyes: "Amber" }, rules);
+  assert.ok(guilty.includes("Headwear") && guilty.includes("Outfit"), `got ${guilty}`);
+  assert.ok(!guilty.includes("Eyes"), "an uninvolved trait was blamed");
+  assert.deepStrictEqual(offendingTraits({ Headwear: "Crown", Outfit: "Turtleneck" }, rules), []);
+  return "Crown+Hoodie blames both, Crown+Turtleneck blames nothing";
+});
+
 // ───────────────────────────────────────────────────────────────── report ────
 
 (async () => {

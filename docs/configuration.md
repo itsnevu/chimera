@@ -117,6 +117,7 @@ module.exports = {
 | Option | Notes |
 |---|---|
 | `reference` | path to your character image, relative to the repo root |
+| `rollMode` | `"urn"` for exact counts (default) or `"independent"` for the classic weighted draw. See below |
 | `editionSize` | override per run with `--size` |
 | `provider` | `openrouter` or `mock` |
 | `model` | see the table below |
@@ -126,6 +127,31 @@ module.exports = {
 | `maxAttemptsPerEdition` | retries before giving up on one edition |
 | `qcModel` | optional; vision model for `ai:qc --verify` |
 | `requestsPerMinute` | optional; enables the rate limiter |
+
+### Roll modes
+
+```js
+rollMode: "urn",   // or "independent"
+```
+
+**`urn`** allocates each trait's exact counts before dealing, then repairs
+constraint violations and duplicates by swapping values between editions —
+never by re-rolling, which would change the multiset. Drift becomes 0.00
+points. Also unlocks `count: N` on an option:
+
+```js
+{ value: "Genesis Crown", weight: 1, count: 1, prompt: "an ornate genesis crown" }
+```
+
+That ships in exactly one edition, guaranteed — which is how you get a 1/1.
+
+Costs 4 ms at 1,000 editions, ~140 ms at 5,000, and a few seconds at 20,000.
+Very dense constraints can make exact counts unsatisfiable; it says so rather
+than shipping a violation.
+
+**`independent`** is the classic draw-and-reject. Simpler and unbounded in
+size, but every trait named by a constraint ships systematically short. See
+[pipeline](pipeline.md#reading-the-rarity-report) for the measurements.
 
 ### Models
 

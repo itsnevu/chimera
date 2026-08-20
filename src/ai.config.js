@@ -8,6 +8,25 @@ module.exports = {
   /** How many editions to produce. */
   editionSize: 1000,
 
+  /**
+   * How traits are drawn.
+   *
+   *   "independent"  draw each trait separately, reject tuples that violate a
+   *                  constraint. Simple, but the rejection is not neutral:
+   *                  discarding a tuple discards every trait in it, so values
+   *                  named by constraints come up systematically short.
+   *                  Measured on this config: Crown ships 3.24% against a
+   *                  declared 4.00%, at 24 standard errors.
+   *
+   *   "urn"          decide the exact counts first, then deal and repair by
+   *                  swapping. Drift becomes 0.000 points, bounded only by
+   *                  integer rounding. Costs milliseconds up to 5,000
+   *                  editions and a few seconds at 20,000.
+   *
+   * Also unlocks `count: N` on an option to pin an exact number of editions.
+   */
+  rollMode: "urn",
+
   /** One OpenRouter key reaches every model. See src/providers/models.js. */
   provider: "openrouter",
   model: "bytedance-seed/seedream-4.5",

@@ -14,10 +14,11 @@ const cfg = require(`${basePath}/src/config.js`);
 const ai = require(`${basePath}/src/ai.config.js`);
 const traitConfig = require(`${basePath}/chimera.traits.js`);
 
-const { createDna, isDnaUnique, filterDNAOptions } = require(`${basePath}/src/core/dna.js`);
+const { createDna, isDnaUnique, filterDNAOptions, DNA_DELIMITER } = require(`${basePath}/src/core/dna.js`);
 const { buildLayers, validate } = require(`${basePath}/src/core/traitLayers.js`);
-const { check, decode } = require(`${basePath}/src/core/constraints.js`);
+const { check, decode, offendingTraits } = require(`${basePath}/src/core/constraints.js`);
 const { assess } = require(`${basePath}/src/core/traitSpace.js`);
+const { roll: urnRoll } = require(`${basePath}/src/core/urn.js`);
 const { promptFor } = require(`${basePath}/src/prompt/promptBuilder.js`);
 const models = require(`${basePath}/src/providers/models.js`);
 const { parser, fail } = require(`${basePath}/src/cli/args.js`);
@@ -34,11 +35,13 @@ const die = (msg) => {
 };
 
 function main() {
-  const { arg, number, endArgs } = parser(process.argv.slice(2));
+  const { arg, number, choice, endArgs } = parser(process.argv.slice(2));
 
   const editionSize = number("--size", ai.editionSize, { min: 1, max: 100000, integer: true });
   const modelId = arg("--model", ai.model);
   const maxSpend = number("--max-spend", ai.maxSpendUSD, { min: 0 });
+  // Read before endArgs() or the flag is reported as unknown.
+  const rollMode = choice("--roll-mode", ai.rollMode || "independent", ["independent", "urn"]);
   endArgs();
 
   console.log(`\nCHIMERA — PLAN\n${"─".repeat(62)}`);
@@ -52,6 +55,7 @@ function main() {
   const model = models.get(modelId);
 
   // ---- can this collection exist? -----------------------------------------
+  const dnaList = new Set();
   const space = assess(layers, rules, editionSize);
   console.log(`  traits          ${layers.length} categories, ` +
     `${layers.reduce((a, l) => a + l.elements.length, 0)} values`);
@@ -80,51 +84,85 @@ function main() {
   }
 
   // ---- roll ----------------------------------------------------------------
-  const dnaList = new Set();
   const editions = [];
   let rejectedByConstraint = 0;
   let rejectedByDuplicate = 0;
-  const guard = editionSize * 200;
   let attempts = 0;
+  let dealsUsed = 0;
 
-  while (editions.length < editionSize && attempts < guard) {
-    attempts++;
-    const dna = createDna(layers);
-
-    const picked = decode(dna, layers);
-    const violation = check(picked, rules);
-    if (violation) {
-      rejectedByConstraint++;
-      continue;
+  if (rollMode === "urn") {
+    // Exact counts. See src/core/urn.js for why rejection sampling is biased.
+    let result;
+    try {
+      result = urnRoll(layers, editionSize, {
+        isValid: (picked) => check(picked, rules) === null,
+        keyOf: (row) => row.join(DNA_DELIMITER),
+        offenders: (picked) => offendingTraits(picked, rules),
+      });
+    } catch (err) {
+      die(`${err.message}`);
     }
-    if (!isDnaUnique(dnaList, dna)) {
-      rejectedByDuplicate++;
-      continue;
-    }
-    dnaList.add(filterDNAOptions(dna));
+    dealsUsed = result.deals;
+    attempts = editionSize;
 
-    const edition = editions.length + 1;
-    const built = promptFor(dna, layers, traitConfig);
-    editions.push({
-      edition,
-      dna,
-      seed: built.seed,
-      traits: built.traits,
-      prompt: built.prompt,
-      negative: built.negative,
+    result.rows.forEach((row, index) => {
+      // Re-encode through the same DNA format the independent path produces,
+      // so everything downstream is identical regardless of roll mode.
+      const dna = layers
+        .map((layer, c) => {
+          const el = layer.elements[row[c]];
+          return `${el.id}:${el.filename}${layer.bypassDNA ? "?bypassDNA=true" : ""}`;
+        })
+        .join(DNA_DELIMITER);
+      dnaList.add(filterDNAOptions(dna));
+      const built = promptFor(dna, layers, traitConfig);
+      editions.push({
+        edition: index + 1,
+        dna,
+        seed: built.seed,
+        traits: built.traits,
+        prompt: built.prompt,
+        negative: built.negative,
+      });
     });
+  } else {
+    const guard = editionSize * 200;
+    while (editions.length < editionSize && attempts < guard) {
+      attempts++;
+      const dna = createDna(layers);
+
+      const picked = decode(dna, layers);
+      if (check(picked, rules)) { rejectedByConstraint++; continue; }
+      if (!isDnaUnique(dnaList, dna)) { rejectedByDuplicate++; continue; }
+      dnaList.add(filterDNAOptions(dna));
+
+      const built = promptFor(dna, layers, traitConfig);
+      editions.push({
+        edition: editions.length + 1,
+        dna,
+        seed: built.seed,
+        traits: built.traits,
+        prompt: built.prompt,
+        negative: built.negative,
+      });
+    }
+
+    if (editions.length < editionSize) {
+      die(
+        `gave up after ${num(attempts)} attempts with only ${num(editions.length)} unique ` +
+        `editions.\n         The trait space is too tight for this edition size.`
+      );
+    }
   }
 
-  if (editions.length < editionSize) {
-    die(
-      `gave up after ${num(attempts)} attempts with only ${num(editions.length)} unique ` +
-      `editions.\n         The trait space is too tight for this edition size.`
-    );
+  console.log(`  roll mode       ${rollMode}` +
+    (rollMode === "urn" ? `  (exact counts, ${dealsUsed} deal${dealsUsed > 1 ? "s" : ""})` : ""));
+  console.log(`  rolled          ${num(editions.length)} unique editions` +
+    (rollMode === "independent" ? ` in ${num(attempts)} attempts` : ""));
+  if (rollMode === "independent") {
+    console.log(`  rejected        ${num(rejectedByConstraint)} by constraint, ` +
+      `${num(rejectedByDuplicate)} as duplicate`);
   }
-
-  console.log(`  rolled          ${num(editions.length)} unique editions in ${num(attempts)} attempts`);
-  console.log(`  rejected        ${num(rejectedByConstraint)} by constraint, ` +
-    `${num(rejectedByDuplicate)} as duplicate`);
 
   // ---- rarity report -------------------------------------------------------
   console.log(`\n  RARITY — target vs actual (flagged when off by more than 2 points)`);
@@ -177,6 +215,7 @@ function main() {
     editionSize: editions.length,
     provider: ai.provider,
     model: modelId,
+    rollMode,
     pricedOn: models.PRICED_ON,
     usdPerImage: model.usdPerImage,
     estimatedUSD: Number(withRerolls.toFixed(2)),

@@ -69,4 +69,36 @@ const check = (picked, rules = []) => {
   return null;
 };
 
-module.exports = { check, decode };
+/**
+ * Which traits are implicated in the first violation, if any.
+ *
+ * Repair only needs to touch the traits a rule actually mentions. Searching
+ * every column instead turns a targeted fix into a full sweep.
+ *
+ * @returns {Array<String>} trait names, empty when the combination is valid
+ */
+const offendingTraits = (picked, rules = []) => {
+  for (const rule of rules) {
+    if (!matches(picked, rule.when)) continue;
+
+    const clash = (clause, test) => {
+      if (!clause) return null;
+      for (const trait of Object.keys(clause)) {
+        const listed = Array.isArray(clause[trait]) ? clause[trait] : [clause[trait]];
+        if (test(listed, picked[trait])) {
+          return [...Object.keys(rule.when), trait];
+        }
+      }
+      return null;
+    };
+
+    const forbidden = clash(rule.forbid, (listed, value) => listed.includes(value));
+    if (forbidden) return forbidden;
+
+    const missing = clash(rule.require, (listed, value) => !listed.includes(value));
+    if (missing) return missing;
+  }
+  return [];
+};
+
+module.exports = { check, decode, offendingTraits };

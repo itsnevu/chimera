@@ -142,11 +142,32 @@ drift, repeat. Nothing is spent until stage 3.
 
 ### Reading the rarity report
 
-Drift is *sampling variance*, not a bug. At 100 editions a 4%-weight trait will
-routinely land 2 or 6 times instead of 4. Raise the edition count and drift
-shrinks; it does not indicate a broken engine. The `weighted draw converges`
-test proves the draw is unbiased to within 4 standard errors over 30,000
-samples.
+Under `rollMode: "urn"` — the default — drift is **0.00 points**. Counts are
+allocated exactly before anything is dealt, so the only residual is integer
+rounding when a weight does not divide the edition count.
+
+Under `rollMode: "independent"` drift has two separate sources, and only one of
+them is variance:
+
+- **Sampling variance.** At 100 editions a 4%-weight trait will routinely land
+  2 or 6 times instead of 4. This shrinks as the edition count grows.
+- **Rejection bias, which does not shrink.** Discarding a tuple that violates a
+  constraint discards *every* trait in it, so values named by constraints come
+  up systematically short. Measured over 400,000 accepted rolls of the sample
+  config:
+
+  | Trait | Declared | Shipped | Deficit |
+  |---|---|---|---|
+  | Headwear / Crown | 4.00% | 3.24% | −0.76 |
+  | Accessory / Monocle | 10.00% | 9.31% | −0.69 |
+  | Outfit / Hoodie | 15.00% | 14.43% | −0.57 |
+  | Expression / Grin | 12.00% | 11.44% | −0.56 |
+
+  The standard error at that sample size is ±0.031 points. A 0.76 point gap is
+  twenty-four standard errors — it is bias, and more editions will not fix it.
+
+Earlier versions of this page told you all drift was variance. That was wrong
+for any collection with constraints.
 
 ---
 

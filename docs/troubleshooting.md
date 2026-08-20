@@ -111,11 +111,30 @@ suggested `--twin-distance`.
 
 ### Rarity drift looks high
 
-Drift is sampling variance, not a bug. At 100 editions a 4%-weight trait will
-routinely land 2 or 6 times instead of 4.
+First check which roll mode you are on — `ai:plan` prints it.
 
-Raise the edition count and drift shrinks. `npm test` proves the draw is
-unbiased to within 4 standard errors over 30,000 samples.
+**`urn`** (the default) reports 0.00 drift. If it does not, something is wrong;
+open an issue.
+
+**`independent`** has two sources of drift, and only one is harmless:
+
+- *Variance*, which shrinks with edition count. At 100 editions a 4%-weight
+  trait routinely lands 2 or 6 times instead of 4.
+- *Rejection bias, which does not shrink.* Every trait named by a constraint
+  comes up systematically short, because rejecting a tuple discards all of its
+  traits. Measured: Crown ships 3.24% against a declared 4.00% over 400,000
+  rolls, where the standard error is 0.031 — twenty-four standard errors out.
+
+If you have constraints and you care about exact rarity, use `urn`.
+
+```js
+// src/ai.config.js
+rollMode: "urn",
+```
+
+Urn costs milliseconds up to 5,000 editions and a few seconds at 20,000. Very
+dense constraints can make exact counts unsatisfiable, in which case it says so
+rather than shipping a violation.
 
 ---
 
