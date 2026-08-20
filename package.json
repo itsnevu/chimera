@@ -26,7 +26,9 @@
     "ai:resume": "node src/pipeline/generate.js",
     "ai:finalize": "node src/pipeline/finalize.js",
     "ai:smoke": "node src/pipeline/generate.js --limit 5",
-    "ai:doctor": "node src/cli/doctor.js"
+    "ai:doctor": "node src/cli/doctor.js",
+    "ai:qc": "node src/pipeline/qc.js",
+    "ai:requeue": "node src/cli/requeue.js"
   },
   "author": "navy",
   "license": "MIT",

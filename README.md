@@ -12,7 +12,7 @@ Chimera is being built in two stages. Be clear on which one you're using.
 |---|---|---|
 | **Layer mode** | Composites transparent PNG layers you supply. Free, instant, fully deterministic. | ✅ **Working** |
 | **AI mode** | Rolls traits, builds prompts, renders through an image model, writes matching metadata. | ✅ **Working** — end to end |
-| **QC verification** | Vision-model check that each render contains the traits its metadata claims. | 🚧 **Not built yet** |
+| **QC** | Flat-render and visual-twin detection (free), plus a vision-model check that each render contains the traits its metadata claims. | ✅ **Working** |
 
 Both modes work. The pipeline has been run end to end for 1,000 editions on the
 free `mock` provider — plan, render, hard-kill, resume, finalize — with zero
@@ -136,7 +136,42 @@ export OPENROUTER_API_KEY=sk-or-...
 npm run ai:smoke -- --yes                # 5 real images, ~$0.20
 npm run ai:generate -- --yes             # the real thing
 npm run ai:resume -- --yes               # continue after a stop. Never re-bills
+
+npm run ai:qc                            # flat renders + visual twins. FREE
+npm run ai:qc -- --verify --yes          # vision model checks every trait. PAID
+npm run ai:requeue -- --yes              # drop flagged editions, re-render them
 ```
+
+### QC
+
+The free tier reads every render and flags anything that came back as a flat
+colour, is unreadable, or is a visual twin of another edition. Twin detection
+uses a 160-bit perceptual hash — 64 bits of structure plus 96 of colour.
+
+Colour is in there because structure alone is not enough: measured on real
+output, two editions differing only in background colour scored **0 bits apart**
+under a structure-only hash, which would flag an entire colour-varied collection
+as duplicates.
+
+The right twin threshold depends on how varied your art is, so QC reports the
+nearest-neighbour distance spread and suggests one rather than pretending a
+default fits every collection:
+
+```
+nearest-neighbour distance over 300 sampled:
+  min 0  p25 0  median 0  p75 0  max 4
+  ! more than half the collection sits within the 5-bit twin threshold.
+    Either the art really is repetitive, or the threshold is too loose
+    for it — try --twin-distance 1
+```
+
+The paid tier (`--verify`) shows each render to a vision model with its trait
+list and asks, per trait, whether it is actually visible. A trait the model does
+not mention is recorded as **unverified**, never as a pass. This is the step
+that turns "metadata matches the request" into "metadata matches the picture".
+
+`ai:requeue` backs up the ledger, moves rejected images to `build/ai/rejects/`
+rather than deleting them, and prints the re-render cost before doing anything.
 
 ### The spend ceiling
 
@@ -168,7 +203,7 @@ is in [docs/ai-mode-plan.md](docs/ai-mode-plan.md).
 ### Tests
 
 ```sh
-npm test        # 30 tests, no dependencies
+npm test        # 37 tests, no dependencies
 ```
 
 Includes statistical checks that the weighted draw converges within 4 standard

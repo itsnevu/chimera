@@ -465,6 +465,95 @@ test("spend accounting never becomes NaN", () => {
   return `null/undefined/NaN fall back to catalogue price`;
 });
 
+
+// ──────────────────────────────────────────────────────────── QC (M5) ────
+
+const { createCanvas } = require(`${basePath}/node_modules/canvas`);
+const phash = require(`${basePath}/src/pipeline/phash.js`);
+const { parseVerdict } = require(`${basePath}/src/providers/vision.js`);
+
+const swatch = (hex, shape) => {
+  const c = createCanvas(64, 64);
+  const x = c.getContext("2d");
+  x.fillStyle = hex; x.fillRect(0, 0, 64, 64);
+  if (shape === "circle") { x.fillStyle = "#000"; x.beginPath(); x.arc(32, 32, 18, 0, 7); x.fill(); }
+  if (shape === "bar")    { x.fillStyle = "#000"; x.fillRect(0, 24, 64, 16); }
+  return c.toBuffer("image/png");
+};
+
+test("phash gives an identical image distance zero", async () => {
+  const img = swatch("#7FB2E5", "circle");
+  const a = await phash.hashImage(img);
+  const b = await phash.hashImage(img);
+  assert.strictEqual(phash.distance(a, b), 0);
+  return "0 bits";
+});
+
+test("phash separates images that differ only in colour", async () => {
+  // The bug this guards: dHash is brightness-based and scored a rose and a
+  // sky-blue background 0 bits apart, so every edition looked like a twin.
+  const a = await phash.hashImage(swatch("#EFA0B4", "circle"));
+  const b = await phash.hashImage(swatch("#7FB2E5", "circle"));
+  const structural = phash.distance(
+    await phash.structureHash(swatch("#EFA0B4", "circle")),
+    await phash.structureHash(swatch("#7FB2E5", "circle"))
+  );
+  const combined = phash.distance(a, b);
+  assert.ok(combined > structural,
+    `colour added nothing: structure ${structural}, combined ${combined}`);
+  assert.ok(combined > 0, "two different colours hashed identically");
+  return `structure ${structural} bits -> combined ${combined} bits`;
+});
+
+test("phash separates images that differ only in shape", async () => {
+  const a = await phash.hashImage(swatch("#CCCCCC", "circle"));
+  const b = await phash.hashImage(swatch("#CCCCCC", "bar"));
+  assert.ok(phash.distance(a, b) > 0, "different shapes hashed identically");
+  return `${phash.distance(a, b)} bits apart`;
+});
+
+test("phash detects a flat render", async () => {
+  const flat = await phash.isFlat(swatch("#123456", null));
+  const busy = await phash.isFlat(swatch("#123456", "bar"));
+  assert.strictEqual(flat.flat, true, "solid colour not detected as flat");
+  assert.strictEqual(busy.flat, false, "an image with content called flat");
+  return `flat stdDev ${flat.stdDev.toFixed(1)} vs busy ${busy.stdDev.toFixed(1)}`;
+});
+
+test("findTwins clusters duplicates and leaves originals alone", async () => {
+  const entries = [
+    { id: 1, hash: await phash.hashImage(swatch("#EFA0B4", "circle")) },
+    { id: 2, hash: await phash.hashImage(swatch("#EFA0B4", "circle")) },
+    { id: 3, hash: await phash.hashImage(swatch("#17161A", "bar")) },
+  ];
+  const clusters = phash.findTwins(entries, 2);
+  assert.strictEqual(clusters.length, 1, `expected 1 cluster, got ${clusters.length}`);
+  assert.deepStrictEqual(clusters[0].sort(), [1, 2]);
+  return "1 and 2 twinned, 3 untouched";
+});
+
+test("QC verdict parses fenced and bare JSON alike", () => {
+  const checkable = [["Headwear", "Crown"], ["Eyes", "Amber"]];
+  const payload = '{"traits":[{"trait":"Headwear","claimed":"Crown","present":false,"note":"bare head"},' +
+                  '{"trait":"Eyes","claimed":"Amber","present":true,"note":""}]}';
+  [payload, "```json\n" + payload + "\n```", "Sure!\n" + payload].forEach((raw) => {
+    const v = parseVerdict(raw, checkable);
+    assert.strictEqual(v.length, 2);
+    assert.strictEqual(v[0].present, false);
+    assert.strictEqual(v[1].present, true);
+  });
+  return "bare, fenced and prose-wrapped all parse";
+});
+
+test("a trait the QC model ignored counts as unverified, not a pass", () => {
+  const checkable = [["Headwear", "Crown"], ["Outfit", "Hoodie"]];
+  const v = parseVerdict('{"traits":[{"trait":"Headwear","claimed":"Crown","present":true}]}', checkable);
+  assert.strictEqual(v.length, 2);
+  assert.strictEqual(v[1].present, null, "silence must not be read as approval");
+  assert.match(v[1].note, /not addressed/);
+  return "unmentioned trait -> present:null";
+});
+
 // ───────────────────────────────────────────────────────────────── report ────
 
 (async () => {
