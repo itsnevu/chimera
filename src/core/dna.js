@@ -13,21 +13,39 @@ const { rarityDelimiter } = require(`${basePath}/src/config.js`);
 
 const DNA_DELIMITER = "-";
 
+/**
+ * Strip the extension.
+ *
+ * `slice(0, -4)` assumed every extension was exactly four characters, so
+ * "Gold Leaf.jpeg" became "Gold Leaf." — a trailing dot that shipped straight
+ * into the metadata `value` — and a file with no extension lost real
+ * characters off its name.
+ */
+const withoutExtension = (_str) => {
+  const dot = _str.lastIndexOf(".");
+  return dot > 0 ? _str.slice(0, dot) : _str;
+};
+
 const getRarityWeight = (_str) => {
-  let nameWithoutExtension = _str.slice(0, -4);
-  var nameWithoutWeight = Number(
-    nameWithoutExtension.split(rarityDelimiter).pop()
-  );
-  if (isNaN(nameWithoutWeight)) {
-    nameWithoutWeight = 1;
+  const nameWithoutExtension = withoutExtension(_str);
+  let weight = Number(nameWithoutExtension.split(rarityDelimiter).pop());
+  if (isNaN(weight)) {
+    weight = 1;
   }
-  return nameWithoutWeight;
+  return weight;
 };
 
 const cleanName = (_str) => {
-  let nameWithoutExtension = _str.slice(0, -4);
-  var nameWithoutWeight = nameWithoutExtension.split(rarityDelimiter).shift();
-  return nameWithoutWeight;
+  const nameWithoutExtension = withoutExtension(_str);
+  const parts = nameWithoutExtension.split(rarityDelimiter);
+  // Only the LAST delimited segment is the weight. Taking the first segment
+  // truncated any name that legitimately contains the delimiter:
+  // "Hash#Tag#10.png" silently became "Hash", losing "Tag", while the weight
+  // still parsed as 10 so nothing looked wrong.
+  if (parts.length > 1 && !isNaN(Number(parts[parts.length - 1]))) {
+    parts.pop();
+  }
+  return parts.join(rarityDelimiter);
 };
 
 /**

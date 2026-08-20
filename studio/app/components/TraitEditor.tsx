@@ -21,8 +21,12 @@ export function TraitEditor({ onSaved, disabled }: { onSaved: () => void; disabl
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  // What is already persisted in chimera.overrides.json, so a save extends
+  // it rather than replacing it.
+  const [saved, setSaved] = useState<Record<string, Record<string, number>>>({});
 
   const load = () => {
+    setError(null);
     fetch("/api/traits", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
@@ -30,6 +34,11 @@ export function TraitEditor({ onSaved, disabled }: { onSaved: () => void; disabl
         setTraits(d.traits);
         setHasOverrides(d.hasOverrides);
         setCombinations(d.combinations);
+        // Keep what is already on disk. The weights in `d.traits` come back
+        // with overrides applied, so they cannot be used to tell an override
+        // from an original — without this, saving one weight dropped every
+        // override saved before it.
+        setSaved(d.overrides ?? {});
         setDraft({});
       })
       .catch(() => setError("Could not read the trait config."));
@@ -42,46 +51,76 @@ export function TraitEditor({ onSaved, disabled }: { onSaved: () => void; disabl
   const save = async () => {
     setBusy(true);
     setError(null);
-    // Send the full picture, not just edits — a partial file would silently
-    // drop overrides the user set earlier.
+
+    // The file is rewritten wholesale, so send what is already stored plus
+    // this session's edits on top.
     const merged: Record<string, Record<string, number>> = {};
-    traits.forEach((t) => {
-      t.options.forEach((o) => {
-        const w = weightOf(t, o);
-        if (w !== o.weight || draft[t.name]?.[o.value] !== undefined) {
-          merged[t.name] = merged[t.name] ?? {};
-          merged[t.name][o.value] = w;
-        }
+    Object.entries(saved).forEach(([trait, values]) => {
+      merged[trait] = { ...values };
+    });
+    Object.entries(draft).forEach(([trait, values]) => {
+      merged[trait] = { ...(merged[trait] ?? {}), ...values };
+    });
+
+    try {
+      const r = await fetch("/api/traits", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overrides: merged }),
       });
-    });
-    const r = await fetch("/api/traits", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ overrides: merged }),
-    });
-    if (!r.ok) setError((await r.json().catch(() => ({}))).error ?? "Save failed");
-    setBusy(false);
-    load();
-    onSaved();
+      if (!r.ok) {
+        // Keep the draft: reloading here would discard the edits that just
+        // failed to save, which is the worst possible response to a failure.
+        setError((await r.json().catch(() => ({}))).error ?? "Save failed");
+        return;
+      }
+      load();
+      onSaved();
+    } catch (e) {
+      setError(`Could not save: ${(e as Error).message}`);
+    } finally {
+      // Always clears, so a network fault cannot leave SAVE disabled forever.
+      setBusy(false);
+    }
   };
 
   const reset = async () => {
     setBusy(true);
-    await fetch("/api/traits", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reset: true }),
-    });
-    setBusy(false);
-    load();
-    onSaved();
+    setError(null);
+    try {
+      const r = await fetch("/api/traits", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reset: true }),
+      });
+      if (!r.ok) {
+        setError((await r.json().catch(() => ({}))).error ?? "Reset failed");
+        return;
+      }
+      load();
+      onSaved();
+    } catch (e) {
+      setError(`Could not reset: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  if (error) return <p style={{ fontSize: 11.5, color: "var(--warn)" }}>{error}</p>;
+  // Only a first load with nothing to show blocks the editor. Once traits are
+  // on screen an error is reported inline — returning early instead replaced
+  // the whole editor with one red sentence and no way back to the edits.
+  if (error && !traits.length) {
+    return <p style={{ fontSize: 11.5, color: "var(--warn)" }}>{error}</p>;
+  }
   if (!traits.length) return <p style={{ fontSize: 11.5, color: "var(--ink-3)" }}>Reading traits…</p>;
 
   return (
     <div>
+      {error && (
+        <p role="alert" style={{ fontSize: 11.5, color: "var(--warn)", marginBottom: 10, lineHeight: 1.5 }}>
+          {error}
+        </p>
+      )}
       <p className="mono" style={{ fontSize: 10, color: "var(--ink-3)", marginBottom: 10 }}>
         {combinations.toLocaleString("en-US")} COMBINATIONS
         {hasOverrides && <span style={{ color: "var(--ember)" }}> · OVERRIDDEN</span>}

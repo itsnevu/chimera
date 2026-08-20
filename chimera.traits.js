@@ -54,6 +54,23 @@ const config = {
    *  and free. See docs/ai-mode-plan.md lever 6. */
   compositeLocally: ["Background"],
 
+  /**
+   * Which trait fills which role in the sentence. Optional — without it every
+   * trait is emitted in declaration order, which is correct but reads flatly.
+   *
+   * Traits omitted here are appended to `modifiers` automatically, so
+   * forgetting one costs you word order, never the trait itself.
+   */
+  promptTemplate: {
+    subject: "Fur",
+    modifiers: ["Expression", "Eyes"],
+    worn: ["Headwear", "Outfit", "Accessory"],
+  },
+
+  /** Say "no headwear or clothing" when every worn slot rolled None. Off by
+   *  default: on a humanoid collection that phrase invites trouble. */
+  emitEmptyWorn: true,
+
   traits: [
     {
       name: "Background",

@@ -24,6 +24,7 @@ const { pool } = require(`${basePath}/src/pipeline/queue.js`);
 const { withRetry, redact } = require(`${basePath}/src/providers/base.js`);
 const { loadReferenceSet } = require(`${basePath}/src/reference/styleBible.js`);
 const { parser, fail } = require(`${basePath}/src/cli/args.js`);
+const models = require(`${basePath}/src/providers/models.js`);
 
 const AI_DIR = `${basePath}/build/ai`;
 const PLAN = `${AI_DIR}/plan.json`;
@@ -132,6 +133,24 @@ async function main() {
     return;
   }
 
+  // Cap the reference set. loadReferenceSet returns the master plus every PNG
+  // in anchors/, and nothing enforced either the provider's or the model's
+  // limit — an extra anchor or two would 400 the whole run non-retryably.
+  // The models that bill per input megapixel also charge for each one, so an
+  // uncapped set silently multiplies the per-image price.
+  const modelCaps = models.MODELS[plan.model]?.maxRefs;
+  const refCap = Math.min(
+    Number.isFinite(provider.maxRefs) ? provider.maxRefs : Infinity,
+    Number.isFinite(modelCaps) ? modelCaps : Infinity
+  );
+  const references = Number.isFinite(refCap) ? refs.buffers.slice(0, refCap) : refs.buffers;
+  if (references.length < refs.buffers.length) {
+    console.log(
+      `  ! references    sending ${references.length} of ${refs.buffers.length} — ` +
+      `${plan.model} accepts at most ${refCap}`
+    );
+  }
+
   fs.mkdirSync(RAW, { recursive: true });
   ledger.open();
 
@@ -165,7 +184,7 @@ async function main() {
               negative: job.negative,
               seed: job.seed,
               traits: job.traits,
-              references: refs.buffers,
+              references,
               output: plan.output,
               model: plan.model,
               apiKey,

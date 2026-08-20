@@ -131,13 +131,17 @@ const drawBackground = () => {
 };
 
 const loadLayerImg = async (_layer) => {
+  // No `new Promise(async ...)` wrapper: the await used to sit inside the
+  // executor, so a decode failure escaped both the executor and the catch.
+  // Promise.all never settled and Node killed the run with an unhandled
+  // rejection, after images were already on disk and before writeMetaData.
   try {
-    return new Promise(async (resolve) => {
-      const image = await loadImage(`${_layer.selectedElement.path}`);
-      resolve({ layer: _layer, loadedImage: image });
-    });
+    const image = await loadImage(`${_layer.selectedElement.path}`);
+    return { layer: _layer, loadedImage: image };
   } catch (error) {
-    console.error("Error loading image:", error);
+    throw new Error(
+      `could not load ${_layer.selectedElement.path}: ${error.message}`
+    );
   }
 };
 
@@ -190,11 +194,16 @@ const startCreating = async () => {
   let editionCount = 1;
   let failedCount = 0;
   let abstractedIndexes = [];
-  for (
-    let i = network == NETWORK.sol ? 0 : 1;
-    i <= layerConfigurations[layerConfigurations.length - 1].growEditionSizeTo;
-    i++
-  ) {
+  // Solana is 0-indexed and ETH is 1-indexed, so only the ETH bound is
+  // inclusive. Building both inclusively gave Solana N+1 indexes for N
+  // editions, and with shuffling on, the extra one displaced a real token id.
+  const lastConfig = layerConfigurations[layerConfigurations.length - 1];
+  const firstIndex = network == NETWORK.sol ? 0 : 1;
+  const lastIndex =
+    network == NETWORK.sol
+      ? lastConfig.growEditionSizeTo - 1
+      : lastConfig.growEditionSizeTo;
+  for (let i = firstIndex; i <= lastIndex; i++) {
     abstractedIndexes.push(i);
   }
   if (shuffleLayerConfigurations) {
@@ -276,6 +285,8 @@ const startCreating = async () => {
         });
         dnaList.add(filterDNAOptions(newDna));
         editionCount++;
+        failedCount = 0; // consecutive failures, not lifetime — a long healthy
+                         // run would otherwise trip the bailout eventually
         abstractedIndexes.shift();
       } else {
         console.log("DNA exists!");
@@ -284,7 +295,12 @@ const startCreating = async () => {
           console.log(
             `You need more layers or elements to grow your edition to ${layerConfigurations[layerConfigIndex].growEditionSizeTo} artworks!`
           );
-          process.exit();
+          // Persist what was actually built, then fail. A bare process.exit()
+          // is exit code 0, so CI and `&&` chains read a half-finished
+          // collection as success — and it skipped writeMetaData entirely,
+          // leaving per-edition JSON with no _metadata.json.
+          writeMetaData(JSON.stringify(metadataList, null, 2));
+          process.exit(1);
         }
       }
     }
